@@ -1,15 +1,15 @@
 Planet Name,x,y,type,resupply,hostile_radius
 Earth,0,0,neutral,,0 
-Luna,10,2,neutral,oxygen,0 
-Mars,20,5,neutral,food,0 
-Ceres,25,-10,neutral,,0 
-Europa,35,-5,neutral,oxygen,0 
-Juno,45,10,neutral,food,0 
-Titan,55,15,neutral,,0 
-Oberon,65,-5,neutral,oxygen,0 
-Gorgon,40,0,hostile,,6 
-Hydra,60,5,hostile,,5 
-Echo,70,10,neutral,food,0 
-Vulcan,80,0,neutral,oxygen,0 
-Xenon,90,5,neutral,,0 
+A,10,2,neutral,oxygen,0 
+B,20,5,neutral,food,0 
+C,25,-10,neutral,,0 
+D,35,-5,neutral,oxygen,0 
+E,45,10,neutral,food,0 
+F,55,15,neutral,,0 
+G,65,-5,neutral,oxygen,0 
+H,40,0,hostile,,6 
+I,60,5,hostile,,5 
+J,70,10,neutral,food,0 
+K,80,0,neutral,oxygen,0 
+L,90,5,neutral,,0 
 Target,100,0,neutral,,0 
