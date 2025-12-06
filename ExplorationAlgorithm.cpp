@@ -16,34 +16,42 @@
 
 using namespace std;
 
+enum class Resupply { NONE, OXYGEN, FOOD };
 struct Point
 {
    double x, y;
 };
-// Edges defined by starting node/vertex (planet), ending node, and weight
+struct Planet
+{
+   string name;
+   Point position;
+   Resupply resupply;
+   double hostileRadius;
+};
+// Edges defined by starting node/vertex (planet), ending node, and distance
 struct Edge
 {
    int node1, node2;
-   double weight;
+   double distance;
 };
-// Stores distance, resource consumption, and order of travel and speed for best path to node
+// Stores cost, resource consumption, and order of travel and speed for best path to node
 struct NodeData
 {
-   double minDistance, consumedFuel, consumedOxygen, consumedFood;
+   double minCost, fuel, food, oxygen, time;
    vector<int> bestPath;
    vector<double> speeds;
-   NodeData(int initialDistance)
+   NodeData(int initialCost)
    {
-      minDistance = initialDistance;
-      consumedFuel = consumedOxygen = consumedFood = 0;
+      minCost = initialCost;
+      fuel = MAX_FUEL;
+      oxygen = MAX_OXYGEN;
+      food = MAX_FOOD;
+      time = 0;
       bestPath = vector<int>();
       speeds = vector<double>();
    }
 };
-
-vector<string> planetNames, resupplies;
-vector<Point> positions;
-vector<double> hostileRadii;
+vector<Planet> planets;
 int nodeCount, edgeCount;
 chrono::steady_clock::time_point startTime;
 // Edge list used to efficiently represent graph
@@ -199,7 +207,11 @@ int parseCSV()
       // Resupply
       commaIndex = line.find(',');
       resupply = trim(toLower(line.substr(0, commaIndex)));
-      if (resupply != "" && resupply != "none" && resupply != "oxygen" && resupply != "food")
+      Resupply resupplyEnum;
+      if (resupply == "oxygen") resupplyEnum = Resupply::OXYGEN;
+      else if (resupply == "food") resupplyEnum = Resupply::FOOD;
+      else if (resupply == "" || resupply == "none") resupplyEnum = Resupply::NONE;
+      else
       {
          cout << "Error: The resupply \"" << resupply << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be \"\" (none), \"food\", or \"oxygen\"." << endl;
          return -1;
@@ -226,12 +238,7 @@ int parseCSV()
          cout << "Error: The hostile radius \"" << hostileRadius << "\" of hostile planet \"" << planetName << "\" (line " << lineNumber << ") must be positive." << endl;
          return -1;
       }
-      
-      // Initialize
-      planetNames.push_back(planetName);
-      positions.push_back({x, y});
-      resupplies.push_back(resupply);
-      hostileRadii.push_back(hostileRadius);
+      planets.push_back({planetName, {x, y}, resupplyEnum, hostileRadius});
    }
    nodeCount = lineNumber - 1;
    iFile.close();
@@ -241,17 +248,17 @@ int parseCSV()
 bool edgeInHostileRadius(int startNode, int endNode)
 {
    // Calculate intersection of line through (x1,y1) and (y1,y2) with circle at (x3,y3) and radius r
-   Point start = positions[startNode], end = positions[endNode];
+   Point start = planets[startNode].position, end = planets[endNode].position;
    // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d=distance along line and theta = atan(slope)
    double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2-y1, run = x2-x1;
-   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta);
+   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
    double l = run*run + rise*rise; // Length of line
    for (int i = 0; i < nodeCount; i++)
    {
-      if (hostileRadii[i] == 0) continue;
-      Point center = positions[i];
+      if (planets[i].hostileRadius == 0) continue;
+      Point center = planets[i].position;
       // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-      double x3 = center.x, y3 = center.y, r = hostileRadii[i], dx = x1-x3, dy = y1-y3;
+      double x3 = center.x, y3 = center.y, r = planets[i].hostileRadius, dx = x1-x3, dy = y1-y3;
       // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
       double b = 2*dx*cosTheta + 2*dy*sinTheta, c = dx*dx + dy*dy - r*r; // a=1
       double discriminant = b*b - 4*c;
@@ -277,14 +284,13 @@ void initializeEdgeList()
          // Set pre-relaxed distance to all other nodes to infinity
          nodes.push_back(NodeData(numeric_limits<double>::infinity()));
       }
-      if (hostileRadii[i] != 0) continue;
-      // Fill edge list with edges and weights for each pair of connected nodes
+      if (planets[i].hostileRadius != 0) continue;
+      // Fill edge list with edges for each pair of connected nodes
       for (int j = 0; j < nodeCount; j++)
       {
          // Each planet connected to all other non-hostile planets
          if (j == i || edgeInHostileRadius(i, j)) continue;
-         // Use distance consumed as initial edge weights, add in fuel, oxygen, food, time dynamically based on optimized speed
-         edgeList.push_back({i, j, calculateDistance(positions[i], positions[j])});
+         edgeList.push_back({i, j, calculateDistance(planets[i].position, planets[j].position)});
          //cout << i << ", " << j << endl; //DEBUG
       }
    }
@@ -295,11 +301,12 @@ void initializeEdgeList()
 // Implemented modified Bellman-Ford algorithm for negative weights due to refills
 void calculatePath()
 {
-   // First derivative test speed optimization
+   // Speed optimization by first derivative test
    // Cost = c(x) = time + fuel + food + oxygen = d/v + Kf*d*v^2 + 2*Kl*d/v
    // c'(x) = -d/v^2 + 2*Kf*d*v + -2*Kl*d/v^2 = (-d + 2*Kf*d*v^3 - 2*Kl*d)/v^2
    // Cost minimized at c'(x) = 0 => -d + 2*Kf*d*v^3 - 2*Kl*d = 0 => v = cbrt((1 + 2*Kl) / (2*Kf))
-   // double optimalSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
+   double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
+
    bool unrelaxed = true;
    while (unrelaxed)
    {
@@ -312,12 +319,79 @@ void calculatePath()
          int node1 = edge->node1, node2 = edge->node2;
          NodeData* node1Data = &nodes[node1];
          NodeData* node2Data = &nodes[node2];
-         double newDistance = node1Data->minDistance + edge->weight;
+         Resupply resupply = planets[node2].resupply;
+
+         double d = edge->distance, speed = idealSpeed; //newSpeed1 = 0, newSpeed2 = 0, newSpeed3 = 0;
+         double currentFuel = node1Data->fuel, currentOxygen = node1Data->oxygen, currentFood = node1Data->food;
+         double fuelConsumed = Kf*d*speed*speed, fuelLeft = currentFuel - fuelConsumed;
+         double oxygenConsumed, foodConsumed, t = d/speed;
+         oxygenConsumed = foodConsumed = Kl*t;
+         double oxygenLeft = currentOxygen - oxygenConsumed, foodLeft = currentFood - foodConsumed;
+         // If resources drop at or below 0, adjust speed
+         bool adjustedSpeed = false;
+         if (oxygenLeft <= 0)
+         {
+            if (resupply == Resupply::OXYGEN)
+            {
+               // If going to oxygen resupply, adjust speed (v) to exhaust oxygen supply
+               // Oxygen = currentOxygen - Kl*t = currentOxygen - Kl*d/v = 0.01
+               speed = Kl * d / (currentOxygen - 0.01);
+            }
+            else
+            {
+               // Exhaust 50% of supply
+               speed = 2 * Kl * d / currentOxygen;
+            }
+            adjustedSpeed = true;
+         }
+         if (foodLeft <= 0)
+         {
+            if (resupply == Resupply::FOOD) speed = Kl * d / (currentFood - 0.01);
+            else speed = 2 * Kl * d / currentFood;
+            adjustedSpeed = true;
+         }
+         if (fuelLeft <= 0)
+         {
+            // Adjust speed (v) to exhaust only 50% of remaining fuel
+            // Fuel = currentFuel - Kf*d*v^2 = currentFuel/2
+            speed = sqrt(currentFuel / (2 * Kf * d));
+            adjustedSpeed = true;
+         }
+         if (adjustedSpeed)
+         {
+            fuelConsumed = Kf*d*speed*speed, fuelLeft = currentFuel - fuelConsumed;
+            t = d/speed;
+            oxygenConsumed = foodConsumed = Kl*t;
+            oxygenLeft = currentOxygen - oxygenConsumed, foodLeft = currentFood - foodConsumed;
+         }
+         // Dynamically assign weights (travel cost) based on time, resource consumption, and refills
+         // Refills can cause negative weights
+         switch (resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenConsumed = currentOxygen - MAX_OXYGEN;
+               oxygenLeft = MAX_OXYGEN;
+               break;
+            case Resupply::FOOD:
+               foodConsumed = currentFood - MAX_FOOD;
+               foodLeft = MAX_FOOD;
+               break;
+            case Resupply::NONE:
+               break;
+         }
+         double newCost = node1Data->minCost + t + fuelConsumed + oxygenConsumed + foodConsumed;
+
          //cout << node1 << ", " << node2 << " checked" << endl; //DEBUG
-         if (newDistance < nodes[node2].minDistance)
+         if (newCost < node2Data->minCost)
          {
             // Relax edge
-            node2Data->minDistance = newDistance;
+            node2Data->minCost = newCost;
+            node2Data->fuel = fuelLeft;
+            node2Data->food = foodLeft;
+            node2Data->oxygen = oxygenLeft;
+            node2Data->time = node1Data->time + t;
+            node2Data->speeds = node1Data->speeds;
+            node2Data->speeds.push_back(speed);
             node2Data->bestPath = node1Data->bestPath;
             node2Data->bestPath.push_back(node2);
             if (!unrelaxed) unrelaxed = true;
@@ -345,17 +419,46 @@ int main()
    initializeEdgeList();
    calculatePath();
    
-   vector<int> path = nodes[nodeCount - 1].bestPath;
+   NodeData lastNode = nodes[nodeCount - 1];
+   vector<double> speeds = lastNode.speeds;
+   vector<int> path = lastNode.bestPath;
    int pathLength = path.size();
-   string planetOrder = "Planet travel order: " + planetNames[path[0]];
-   for (int i = 1; i < pathLength; i++)
+   cout << "Planet travel order (planet, speed, distance, time, fuel, oxygen, food, score):" << endl;
+   //try
+   //{
+   for (int i = 0; i < pathLength; i++)
    {
-      planetOrder += ", " + planetNames[path[i]];
+      int node = path[i];
+      double d = calculateDistance((i == 0) ? Point({0, 0}) : planets[node-1].position, planets[node].position), t = d/speeds[i];
+      double fu = nodes[node].fuel, o = nodes[node].oxygen, fo = nodes[node].food, sc = t-(fu+o+fo);
+      cout << i+1 << ") " 
+           << left
+           << setw(10) << planets[node].name + ", " 
+           << setw(10) << speeds[i] << ", " 
+           << setw(10) << d << ", " 
+           << setw(10) << t << ",  " 
+           << setw(10) << fu << ", " 
+           << setw(10) << o << ", " 
+           << setw(10) << fo << ", " 
+           << setw(10) << sc 
+           << endl;
    }
-   cout << planetOrder << endl;
+   cout << endl;
+   double travelTime = lastNode.time, fuelLeft = lastNode.fuel, oxygenLeft = lastNode.oxygen, foodLeft = lastNode.food;
+   cout << "Travel time (time-AU): " << travelTime << endl;
+   cout << "Remaining fuel: " << fuelLeft << endl;
+   cout << "Remaining oxygen: " << oxygenLeft << endl;
+   cout << "Remaining food: " << foodLeft << endl;
+   cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
+   //}
+   //catch (...)
+   //{
+   //   cout << "ERROR" << endl;
+   //}
 
    long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
    // Convert microseconds to milliseconds, fix 3 decimals
+   cout << endl;
    cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
 
    /*while (true)//DEBUG
