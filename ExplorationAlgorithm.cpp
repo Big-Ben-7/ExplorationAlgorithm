@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <vector>
 #include <string>
@@ -7,29 +8,47 @@
 #include <cmath>
 #include <limits>
 
-#define kf 0.15
-#define kl 0.3
+#define Kf 0.15
+#define Kl 0.3
+#define MAX_FUEL 3000
+#define MAX_OXYGEN 2000
+#define MAX_FOOD 2000
 
 using namespace std;
 
 struct Point
 {
-   double x;
-   double y;
+   double x, y;
 };
+// Edges defined by starting node/vertex (planet), ending node, and weight
+struct Edge
+{
+   int node1, node2;
+   double weight;
+};
+// Stores distance, resource consumption, and order of travel and speed for best path to node
+struct NodeData
+{
+   double minDistance, consumedFuel, consumedOxygen, consumedFood;
+   vector<int> bestPath;
+   vector<double> speeds;
+   NodeData(int initialDistance)
+   {
+      minDistance = initialDistance;
+      consumedFuel = consumedOxygen = consumedFood = 0;
+      bestPath = vector<int>();
+      speeds = vector<double>();
+   }
+};
+
 vector<string> planetNames, resupplies;
 vector<Point> positions;
 vector<double> hostileRadii;
-int vertexCount;
+int nodeCount, edgeCount;
 chrono::steady_clock::time_point startTime;
-
-// Adjacency list to efficiently represent graph
-// List of all vertices (planets) connected to each vertex in form pair<connected vertex index, edge weight>
-vector<vector<pair<int, double>>> adjacencyList;
-// Distances of shortest path to each vertex
-vector<double> minDistances;
-// List of vertex indices making up shortest path to each vertex
-vector<vector<int>> paths;
+// Edge list used to efficiently represent graph
+vector<Edge> edgeList;
+vector<NodeData> nodes;
 
 string toLower(string str)
 {
@@ -214,60 +233,62 @@ int parseCSV()
       resupplies.push_back(resupply);
       hostileRadii.push_back(hostileRadius);
    }
-   vertexCount = lineNumber - 1;
+   nodeCount = lineNumber - 1;
    iFile.close();
    return 0;
 }
 
-bool edgeInHostileRadius(int startVertex, int endVertex)
+bool edgeInHostileRadius(int startNode, int endNode)
 {
-   //cout << endl;
    // Calculate intersection of line through (x1,y1) and (y1,y2) with circle at (x3,y3) and radius r
-   Point start = positions[startVertex], end = positions[endVertex];
+   Point start = positions[startNode], end = positions[endNode];
    // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d=distance along line and theta = atan(slope)
-   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y;
-   double rise = y2-y1, run = x2-x1, theta = atan2(rise, run);
-   double l = run*run + rise*rise;
-   for (int i = 0; i < vertexCount; i++)
+   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2-y1, run = x2-x1;
+   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta);
+   double l = run*run + rise*rise; // Length of line
+   for (int i = 0; i < nodeCount; i++)
    {
       if (hostileRadii[i] == 0) continue;
       Point center = positions[i];
       // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
       double x3 = center.x, y3 = center.y, r = hostileRadii[i], dx = x1-x3, dy = y1-y3;
       // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
-      double b = 2*dx*cos(theta) + 2*dy*sin(theta), c = dx*dx + dy*dy - r*r; // a=1
+      double b = 2*dx*cosTheta + 2*dy*sinTheta, c = dx*dx + dy*dy - r*r; // a=1
       double discriminant = b*b - 4*c;
       // If discriminant < 0, no solution and edge does not cross hostile circle
       if (discriminant < 0) continue;
       double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2; // Roots from quadratic formula
       // If both values for d are lower or higher than edge length, hostile circle is still not crossed
       if ((d1 < 0 && d2 < 0) || (d1*d1 > l && d2*d2 > l)) continue;
-      //cout << startVertex << ", " << endVertex << " TRUEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" << endl; //DEBUG
+      //cout << startNode << ", " << endNode << " TRUEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" << endl; //DEBUG
       return true;
    }
    return false;
 }
 
-void setAdjacencyList()
+void initializeEdgeList()
 {
-   // Set initial vertex distance to 0 and all others to infinity
-   minDistances.push_back(0);
-   for (int i = 0; i < vertexCount; i++)
+   // Set distance to initial node to 0
+   nodes.push_back(NodeData(0));
+   for (int i = 0; i < nodeCount; i++)
    {
-      if (i != 0) minDistances.push_back(numeric_limits<double>::infinity());
-      paths.push_back(vector<int>());
-      adjacencyList.push_back(vector<pair<int, double>>());
+      if (i != 0)
+      {
+         // Set pre-relaxed distance to all other nodes to infinity
+         nodes.push_back(NodeData(numeric_limits<double>::infinity()));
+      }
       if (hostileRadii[i] != 0) continue;
-      // Fill adjacency list with each vertex's connected vertices and weights (cost)
-      for (int j = 0; j < vertexCount; j++)
+      // Fill edge list with edges and weights for each pair of connected nodes
+      for (int j = 0; j < nodeCount; j++)
       {
          // Each planet connected to all other non-hostile planets
          if (j == i || edgeInHostileRadius(i, j)) continue;
          // Use distance consumed as initial edge weights, add in fuel, oxygen, food, time dynamically based on optimized speed
-         adjacencyList[i].push_back({j, calculateDistance(positions[i], positions[j])});
+         edgeList.push_back({i, j, calculateDistance(positions[i], positions[j])});
          //cout << i << ", " << j << endl; //DEBUG
       }
    }
+   edgeCount = edgeList.size();
    //cout << endl; //DEBUG
 }
 
@@ -275,56 +296,36 @@ void setAdjacencyList()
 void calculatePath()
 {
    // First derivative test speed optimization
-   // Cost = c(x) = time + fuel + food + oxygen = d/v + kf*d*v^2 + 2*kl*d/v
-   // c'(x) = -d/v^2 + 2*kf*d*v + -2*kl*d/v^2 = (-d + 2*kf*d*v^3 - 2*kl*d)/v^2
-   // Cost minimized at c'(x) = 0 => -d + 2*kf*d*v^3 - 2*kl*d = 0 => v = cbrt((1 + 2*kl) / (2*kf))
-   //double optimalSpeed = cbrt((1 + 2 * kl) / (2 * kf));
+   // Cost = c(x) = time + fuel + food + oxygen = d/v + Kf*d*v^2 + 2*Kl*d/v
+   // c'(x) = -d/v^2 + 2*Kf*d*v + -2*Kl*d/v^2 = (-d + 2*Kf*d*v^3 - 2*Kl*d)/v^2
+   // Cost minimized at c'(x) = 0 => -d + 2*Kf*d*v^3 - 2*Kl*d = 0 => v = cbrt((1 + 2*Kl) / (2*Kf))
+   // double optimalSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
    bool unrelaxed = true;
    while (unrelaxed)
    {
       // Terminate once one iteration has passed with no relaxations
       // (Any negative cycles due to refills will vanish over iterations as food/oxygen increase)
       unrelaxed = false;
-      for (int i = 0; i < vertexCount; i++)
+      for (int i = 0; i < edgeCount; i++)
       {
-         double minDistance = minDistances[i];
-         vector<pair<int, double>> connectedVertices = adjacencyList[i];
-         int edgeCount = connectedVertices.size();
-         for (int j = 0; j < edgeCount; j++)
+         Edge* edge = &edgeList[i];
+         int node1 = edge->node1, node2 = edge->node2;
+         NodeData* node1Data = &nodes[node1];
+         NodeData* node2Data = &nodes[node2];
+         double newDistance = node1Data->minDistance + edge->weight;
+         //cout << node1 << ", " << node2 << " checked" << endl; //DEBUG
+         if (newDistance < nodes[node2].minDistance)
          {
-            pair<int, double> connectedVertex = connectedVertices[j];
-            double newDistance = minDistance + connectedVertex.second;
-            int vertex = connectedVertex.first;
-            //cout << i << ", " << vertex << " checked" << endl; //DEBUG
-            if (newDistance < minDistances[connectedVertex.first])
-            {
-               // Relax edge
-               minDistances[vertex] = newDistance;
-               paths[vertex] = paths[i];
-               paths[vertex].push_back(vertex);
-               if (!unrelaxed) unrelaxed = true;
-               //cout << i << ", " << vertex << " relaxed" << endl; //DEBUG
-            }
+            // Relax edge
+            node2Data->minDistance = newDistance;
+            node2Data->bestPath = node1Data->bestPath;
+            node2Data->bestPath.push_back(node2);
+            if (!unrelaxed) unrelaxed = true;
+            //cout << i << ", " << node << " relaxed" << endl; //DEBUG
          }
       }
    }
 }
-
-/*bool testCircle(double x1, double y1, double x2, double y2, double x3, double y3, double r)
-{
-   double dx = x1-x3, dy = y1-y3;
-   double rise = y2-y1, run = x2-x1, theta = atan2(rise, run);
-   double b = 2*dx*cos(theta) + 2*dy*sin(theta), c = dx*dx + dy*dy - r*r;
-   double discriminant = b*b - 4*c;
-   cout << "disc = " << discriminant << endl;
-   if (discriminant < 0) return false;
-   double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2;
-   double l = run*run + rise*rise;
-   cout << "roots^2: " << d1*d1 << ", " << d2*d1 << ", l=" << l << endl;
-   if ((d1 < 0 && d2 < 0) || (d1*d1 > l && d2*d2 > l)) return false;
-   cout << "true" << endl;
-   return true;
-}*/
 
 int main()
 {
@@ -341,10 +342,10 @@ int main()
       error = parseCSV();
    } while (error != 0);
 
-   setAdjacencyList();
+   initializeEdgeList();
    calculatePath();
    
-   vector<int> path = paths[vertexCount - 1];
+   vector<int> path = nodes[nodeCount - 1].bestPath;
    int pathLength = path.size();
    string planetOrder = "Planet travel order: " + planetNames[path[0]];
    for (int i = 1; i < pathLength; i++)
@@ -354,7 +355,8 @@ int main()
    cout << planetOrder << endl;
 
    long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-   cout << "Calculation time (milliseconds): " << calcTime / 1000.0 << endl;
+   // Convert microseconds to milliseconds, fix 3 decimals
+   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
 
    /*while (true)//DEBUG
    {
@@ -379,3 +381,19 @@ int main()
       cout << endl;
    }*/
 }
+
+/*bool testCircle(double x1, double y1, double x2, double y2, double x3, double y3, double r)
+{
+   double dx = x1-x3, dy = y1-y3;
+   double rise = y2-y1, run = x2-x1, theta = atan2(rise, run);
+   double b = 2*dx*cos(theta) + 2*dy*sin(theta), c = dx*dx + dy*dy - r*r;
+   double discriminant = b*b - 4*c;
+   cout << "disc = " << discriminant << endl;
+   if (discriminant < 0) return false;
+   double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2;
+   double l = run*run + rise*rise;
+   cout << "roots^2: " << d1*d1 << ", " << d2*d1 << ", l=" << l << endl;
+   if ((d1 < 0 && d2 < 0) || (d1*d1 > l && d2*d2 > l)) return false;
+   cout << "true" << endl;
+   return true;
+}*/

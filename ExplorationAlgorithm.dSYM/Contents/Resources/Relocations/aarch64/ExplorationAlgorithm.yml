@@ -1,5 +1,5 @@
 ---
 triple:          'arm64-apple-darwin'
-binary-path:     '/Users/Shared/TSA/25-26/Coding/ExplorationAlgorithm'
+binary-path:     '/Users/Shared/TSA/25-26/ExplorationAlgorithm/ExplorationAlgorithm'
 relocations:     []
 ...
