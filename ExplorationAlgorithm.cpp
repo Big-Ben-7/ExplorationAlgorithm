@@ -22,6 +22,14 @@ enum class Resupply { NONE, OXYGEN, FOOD };
 struct Point
 {
    double x, y;
+   Point()
+   {
+      x = y = 0;
+   }
+   Point(double newX, double newY)
+   {
+      x = newX, y = newY;
+   }
 };
 struct PlanetData
 {
@@ -29,28 +37,33 @@ struct PlanetData
    Point position;
    Resupply resupply;
    double hostileRadius;
+   PlanetData(string n, double x, double y, Resupply r, double h)
+   {
+      name = n, position = Point(x, y), resupply = r, hostileRadius = h;
+   }
 };
 // Edges defined by starting node/vertex (planet), ending node, and distance
 struct Edge
 {
    int node1, node2;
    double distance;
+   Edge(int n1, int n2, double d)
+   {
+      node1 = n1, node2 = n2, distance = d;
+   }
 };
 // Stores cost, resource consumption, and order of travel and speed for best path to node
 struct NodeData
 {
-   double minCost, fuel, food, oxygen, time;
+   double minCost, fuel, food, oxygen;
    vector<int> bestPath;
-   vector<double> speeds;
    NodeData(int initialCost)
    {
       minCost = initialCost;
       fuel = MAX_FUEL;
       oxygen = MAX_OXYGEN;
       food = MAX_FOOD;
-      time = 0;
       bestPath = vector<int>();
-      speeds = vector<double>();
    }
 };
 vector<vector<double>> nodeDistances;
@@ -71,7 +84,6 @@ double singleResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
 // Ideal speed disregarding consumption of both Kl terms (both resupply types remaining)
 double doubleResupplySpeed = 1 / cbrt(2 * Kf);
 string mapName;
-
 
 string toLower(string str)
 {
@@ -104,7 +116,7 @@ bool isValidPlanet(string planetName)
    // Planet names can't be all special characters!
    return alphanumeric;
 }
-double calculateDistance(Point pos1, Point pos2)
+double calculateDistance(const Point pos1, const Point pos2)
 {
    double dx = pos2.x - pos1.x;
    double dy = pos2.y - pos1.y;
@@ -136,7 +148,7 @@ int parseCSV()
    } while (trim(line) == ""); // Skip empty lines
    if (count(line.begin(), line.end(), ',') != 5)
    {
-      cout << "Error: Line 1 (header) must be formatted as \"Planet Name,x,y,type,resupply,hostile_radius\"." << endl;
+      cout << "Error: Entry 1 (header) must be formatted as \"Planet Name,x,y,type,resupply,hostile_radius\"." << endl;
       return -1;
    }
    int commaIndex;
@@ -146,7 +158,7 @@ int parseCSV()
       commaIndex = line.find(',');
       if(trim(toLower(line.substr(0, commaIndex))) != headerSections[i])
       {
-         cout << "Error: Line 1 (header) must be formatted as \"Planet Name,x,y,type,resupply,hostile_radius\"." << endl;
+         cout << "Error: Entry 1 (header) must be formatted as \"Planet Name,x,y,type,resupply,hostile_radius\"." << endl;
          return -1;
       }
       line = line.substr(commaIndex + 1);
@@ -163,15 +175,15 @@ int parseCSV()
       int extraCommas = count(line.begin(), line.end(), ',') - 5;
       if (extraCommas > 0)
       {
-         if (extraCommas == 1) cout << "Error: Line " << lineNumber << " has an extra comma." << endl;
-         else cout << "Error: Line " << lineNumber << " has " << extraCommas << " extra commas." << endl;
+         if (extraCommas == 1) cout << "Error: Entry " << lineNumber << " has an extra comma." << endl;
+         else cout << "Error: Entry " << lineNumber << " has " << extraCommas << " extra commas." << endl;
          return -1;
       }
       else if (extraCommas < 0)
       {
          extraCommas *= -1;
-         if (extraCommas == 1) cout << "Error: Line " << lineNumber << " needs an extra comma." << endl;
-         else cout << "Error: Line " << lineNumber << " needs " << extraCommas << " extra commas." << endl;
+         if (extraCommas == 1) cout << "Error: Entry " << lineNumber << " needs an extra comma." << endl;
+         else cout << "Error: Entry " << lineNumber << " needs " << extraCommas << " extra commas." << endl;
          return -1;
       }
       
@@ -257,14 +269,14 @@ int parseCSV()
          cout << "Error: The hostile radius \"" << hostileRadius << "\" of hostile planet \"" << planetName << "\" (line " << lineNumber << ") must be positive." << endl;
          return -1;
       }
-      planets.push_back({planetName, {x, y}, resupplyEnum, hostileRadius});
+      planets.emplace_back(planetName, x, y, resupplyEnum, hostileRadius);
    }
    nodeCount = lineNumber - 1;
    iFile.close();
    return 0;
 }
 
-bool edgeInHostileRadius(int startNode, int endNode)
+bool edgeInHostileRadius(const int startNode, const int endNode)
 {
    // Calculate intersection of line through (x1,y1) and (y1,y2) with circle at (x3,y3) and radius r
    Point& start = planets[startNode].position, end = planets[endNode].position;
@@ -309,10 +321,9 @@ void initializeLists()
       {
          // Each planet connected to all other non-hostile planets
          if (edgeInHostileRadius(i, j)) continue;
-         double distance = calculateDistance(planets[i].position, planets[j].position);
-         edgeList.push_back({i, j, distance});
-         edgeList.push_back({j, i, distance});
-         nodeDistances[i][j] = nodeDistances[j][i] = distance;
+         double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
+         edgeList.emplace_back(i, j, distance);
+         edgeList.emplace_back(j, i, distance);
       }
    }
    edgeCount = edgeList.size();
@@ -371,9 +382,6 @@ void calculatePath()
             node2Data.fuel = fuelLeft;
             node2Data.food = foodLeft;
             node2Data.oxygen = oxygenLeft;
-            node2Data.time = node1Data.time + t;
-            node2Data.speeds = node1Data.speeds;
-            node2Data.speeds.push_back(speed);
             node2Data.bestPath = node1Data.bestPath;
             node2Data.bestPath.push_back(node2);
             if (!unrelaxed) unrelaxed = true;
@@ -497,10 +505,10 @@ void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, 
 {
    cout << endl;
    cout << "Map used: " << mapName << endl;
-   cout << "Planet travel order (stats upon arrival, all values in AU): " << endl;
+   cout << "Planet travel order (all values rounded to 4 decimals and in AU): " << endl;
    cout << endl;
-   cout << " " << right << setw(12) << "Planet: " << setw(12) << "Speed: " << setw(12) << "Dist: " << setw(12) << "Time: " << setw(12) << "Fuel: " << setw(12) << "Oxyg: " << setw(12) << "Food: " << setw(12) << "Score: " << endl;
-   cout << fixed << setprecision(4);
+   cout << " " << right << setw(14) << "Planet: " << setw(14) << "Speed: " << setw(14) << "Dist: " << setw(14) << "Time: " << setw(14) << "Fuel: " << setw(14) << "Oxyg: " << setw(14) << "Food: " << setw(14) << "Score: " << endl;
+   cout << fixed << setprecision(6);
    int pathLength = path.size();
    int node0 = 0;
    double travelTime = 0;
@@ -509,17 +517,17 @@ void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, 
       int node = path[i];
       double d = nodeDistances[node0][node], v = speeds[i], t = d/v;
       double fu = fuel[i], o = oxygen[i], fo = food[i], s = t - (fu + o + fo);
-      if (edgeInHostileRadius(node0, node)) cout << "DEBUG: INVALID PATH - edge crosses hostile radius" << endl;
-      cout << i + 2 << ") " 
+      if (edgeInHostileRadius(node0, node)) cout << "DEBUG: Edge crosses hostile radius" << endl;
+      cout << i + 1 << ") " 
            << right
-           << setw(9) << planets[node].name << "   " 
-           << setw(9) << v << "   " 
-           << setw(9) << d << "   " 
-           << setw(9) << t << "   " 
-           << setw(9) << fu << "   " 
-           << setw(9) << o << "   " 
-           << setw(9) << fo << "   " 
-           << setw(9) << s
+           << setw(11) << planets[node].name << "   " 
+           << setw(11) << v << "   " 
+           << setw(11) << d << "   " 
+           << setw(11) << t << "   " 
+           << setw(11) << fu << "   " 
+           << setw(11) << o << "   " 
+           << setw(11) << fo << "   " 
+           << setw(11) << s
            << endl;
       travelTime += t;
       node0 = node;
@@ -597,85 +605,3 @@ int main()
    cout << endl;
    while (true) testPath();
 }
-
-// Commented-out tests
-
-// Resource drop testing
-/*// If resources drop at or below 0, adjust speed
-bool adjustedSpeed = false;
-if (oxygenLeft <= 0)
-{
-   if (resupply == Resupply::OXYGEN)
-   {
-      // If going to oxygen resupply, adjust speed (v) to exhaust oxygen supply
-      // Oxygen = currentOxygen - Kl*t = currentOxygen - Kl*d/v = 0.01
-      speed = Kl * d / (currentOxygen - 0.01);
-   }
-   else
-   {
-      // Exhaust 50% of supply
-      speed = 2 * Kl * d / currentOxygen;
-   }
-   adjustedSpeed = true;
-}
-if (foodLeft <= 0)
-{
-   if (resupply == Resupply::FOOD) speed = Kl * d / (currentFood - 0.01);
-   else speed = 2 * Kl * d / currentFood;
-   adjustedSpeed = true;
-}
-if (fuelLeft <= 0)
-{
-   // Adjust speed (v) to exhaust only 50% of remaining fuel
-   // Fuel = currentFuel - Kf*d*v^2 = currentFuel/2
-   speed = sqrt(currentFuel / (2 * Kf * d));
-   adjustedSpeed = true;
-}
-if (adjustedSpeed)
-{
-   fuelConsumed = Kf*d*speed*speed, fuelLeft = currentFuel - fuelConsumed;
-   t = d/speed;
-   oxygenConsumed = foodConsumed = Kl*t;
-   oxygenLeft = currentOxygen - oxygenConsumed, foodLeft = currentFood - foodConsumed;
-}*/
-
-// Loop testing
-/*while (true)//DEBUG
-   {
-      double x1, y1, x2, y2, x3, y3, r;
-      cout << "x1: ";
-      cin >> x1;
-      cout << "y1: ";
-      cin >> y1;
-      cout << "x2: ";
-      cin >> x2;
-      cout << "y2: ";
-      cin >> y2;
-      cout << "x3: ";
-      cin >> x3;
-      cout << "y3: ";
-      cin >> y3;
-      cout << "r: ";
-      cin >> r;
-      cout << endl;
-      testCircle(x1, y1, x2, y2, x3, y3, r);
-      cout << endl;
-      cout << endl;
-   }*/
-
-// Hostile radius testing
-/*bool testCircle(double x1, double y1, double x2, double y2, double x3, double y3, double r)
-{
-   double dx = x1-x3, dy = y1-y3;
-   double rise = y2-y1, run = x2-x1, theta = atan2(rise, run);
-   double b = 2*dx*cos(theta) + 2*dy*sin(theta), c = dx*dx + dy*dy - r*r;
-   double discriminant = b*b - 4*c;
-   cout << "disc = " << discriminant << endl;
-   if (discriminant < 0) return false;
-   double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2;
-   double l = run*run + rise*rise;
-   cout << "roots^2: " << d1*d1 << ", " << d2*d1 << ", l=" << l << endl;
-   if ((d1 < 0 && d2 < 0) || (d1*d1 > l && d2*d2 > l)) return false;
-   cout << "true" << endl;
-   return true;
-}*/
