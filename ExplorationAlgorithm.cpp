@@ -13,6 +13,7 @@
 #define MAX_FUEL 3000
 #define MAX_OXYGEN 2000
 #define MAX_FOOD 2000
+#define infinity (numeric_limits<double>::infinity())
 
 using namespace std;
 
@@ -52,6 +53,7 @@ struct NodeData
       speeds = vector<double>();
    }
 };
+vector<vector<double>> nodeDistances;
 vector<PlanetData> planets;
 int nodeCount, edgeCount;
 chrono::steady_clock::time_point startTime;
@@ -68,6 +70,7 @@ double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
 double singleResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
 // Ideal speed disregarding consumption of both Kl terms (both resupply types remaining)
 double doubleResupplySpeed = 1 / cbrt(2 * Kf);
+string mapName;
 
 
 string toLower(string str)
@@ -113,9 +116,10 @@ int parseCSV()
    // File input
    cout << endl;
    ifstream iFile;
-   string fileName = "ExampleMap.csv", line = "";
-   /*cout << "Map file name: ";
-   getline(cin, fileName);*/
+   string fileName, line = "";
+   cout << "Map file name: ";
+   getline(cin, fileName);
+   mapName = fileName.substr(0, fileName.rfind('.'));
    // Start computation time immediately after user enters file name.
    startTime = chrono::steady_clock::now();
    iFile.open(fileName);
@@ -291,12 +295,13 @@ void initializeLists()
 {
    // Set distance to initial node to 0
    nodes.emplace_back(0);
+   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
    for (int i = 0; i < nodeCount; i++)
    {
       if (i != 0)
       {
          // Set pre-relaxed distance to all other nodes to infinity
-         nodes.emplace_back(numeric_limits<double>::infinity());
+         nodes.emplace_back(infinity);
       }
       if (planets[i].hostileRadius != 0) continue;
       // Fill edge list with edges for each pair of connected nodes
@@ -307,6 +312,7 @@ void initializeLists()
          double distance = calculateDistance(planets[i].position, planets[j].position);
          edgeList.push_back({i, j, distance});
          edgeList.push_back({j, i, distance});
+         nodeDistances[i][j] = nodeDistances[j][i] = distance;
       }
    }
    edgeCount = edgeList.size();
@@ -326,14 +332,13 @@ void calculatePath()
          int node1 = edge.node1, node2 = edge.node2;
          NodeData& node1Data = nodes[node1];
          NodeData& node2Data = nodes[node2];
-         Resupply resupply = planets[node2].resupply;
          double d = edge.distance, speed, t;
          double currentFuel = node1Data.fuel, currentOxygen = node1Data.oxygen, currentFood = node1Data.food;
          
          // Dynamically assign weights (travel cost) based on time, resource consumption, and resupplies
          // Resupplies can cause negative weights (negative cycles vanish over iterations, so no infinite loops)
          double oxygenConsumed, foodConsumed, oxygenLeft, foodLeft;
-         switch (resupply)
+         switch (planets[node2].resupply)
          {
             case Resupply::OXYGEN:
                speed = singleResupplySpeed, t = d/speed;
@@ -378,7 +383,7 @@ void calculatePath()
 }
 
 // Stage 2: Optimize resource usage given the known path
-void optimizePath(vector<int>& path, vector<double>& speeds)
+int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
 {
    int pathLength = path.size();
    int lastFoodResupply = -1, lastOxygenResupply = -1;
@@ -399,21 +404,134 @@ void optimizePath(vector<int>& path, vector<double>& speeds)
    }
    int resupply1 = min(lastFoodResupply, lastOxygenResupply);
    int resupply2 = max(lastFoodResupply, lastOxygenResupply);
+   double totalFuelConsumed = 0;
+   int node0 = 0;
    for (int i = 0; i <= resupply1; i++)
    {
       // Before last oxygen and food refill, optimize speed based on fuel
       speeds[i] = doubleResupplySpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * doubleResupplySpeed * doubleResupplySpeed;
+      node0 = node;
    }
    for (int i = resupply1 + 1; i <= resupply2; i++)
    {
       // Before last oxygen/food refill, optimize speed based on fuel and food/oxygen
       speeds[i] = singleResupplySpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * singleResupplySpeed * singleResupplySpeed;
+      node0 = node;
    }
    for (int i = resupply2 + 1; i < pathLength; i++)
    {
       // After refills, optimize speed based on fuel, food, and oxygen
       speeds[i] = idealSpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * idealSpeed * idealSpeed;
+      node0 = node;
    }
+   // If fuel drops to 0, reduce speed by constant factor
+   double speedFactor = sqrt((MAX_FUEL - 0.001) / totalFuelConsumed);
+   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
+   node0 = 0;
+   if (totalFuelConsumed >= MAX_FUEL)
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         speeds[i] *= speedFactor;
+         double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed;
+         double consumed = Kl * t, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         // If oxygen or food then drop to 0, path is invalid because food/oxygen and fuel have opposite dependencies on speed
+         if (consumed > foodLeft - 0.001 || consumed > oxygenLeft - 0.001) return -1;
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            case Resupply::NONE:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   } 
+   else 
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         double distance = nodeDistances[node0][node], speed = speeds[i];
+         double minOxygenSpeed = distance / ((oxygenLeft - 0.01) / Kl);
+         double minFoodSpeed = distance / ((foodLeft - 0.01) / Kl);
+         double minSpeed = min(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
+         if (minSpeed > maxSpeed) return -1;
+         if (speed < minSpeed) speeds[i] = speed = minSpeed;
+         double consumed = Kl * distance / speed, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            case Resupply::NONE:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   }
+   return 0;
+}
+
+void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
+{
+   cout << endl;
+   cout << "Map used: " << mapName << endl;
+   cout << "Planet travel order (stats upon arrival, all values in AU): " << endl;
+   cout << endl;
+   cout << " " << right << setw(12) << "Planet: " << setw(12) << "Speed: " << setw(12) << "Dist: " << setw(12) << "Time: " << setw(12) << "Fuel: " << setw(12) << "Oxyg: " << setw(12) << "Food: " << setw(12) << "Score: " << endl;
+   cout << fixed << setprecision(4);
+   int pathLength = path.size();
+   int node0 = 0;
+   double travelTime = 0;
+   for (int i = 0; i < pathLength; i++)
+   {
+      int node = path[i];
+      double d = nodeDistances[node0][node], v = speeds[i], t = d/v;
+      double fu = fuel[i], o = oxygen[i], fo = food[i], s = t - (fu + o + fo);
+      if (edgeInHostileRadius(node0, node)) cout << "DEBUG: INVALID PATH - edge crosses hostile radius" << endl;
+      cout << i + 2 << ") " 
+           << right
+           << setw(9) << planets[node].name << "   " 
+           << setw(9) << v << "   " 
+           << setw(9) << d << "   " 
+           << setw(9) << t << "   " 
+           << setw(9) << fu << "   " 
+           << setw(9) << o << "   " 
+           << setw(9) << fo << "   " 
+           << setw(9) << s
+           << endl;
+      travelTime += t;
+      node0 = node;
+   }
+   cout << endl;
+   cout << "Final stats: " << endl;
+   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
+   cout << "Travel time: " << travelTime << endl;
+   cout << "Remaining fuel: " << fuelLeft << endl;
+   cout << "Remaining oxygen: " << oxygenLeft << endl;
+   cout << "Remaining food: " << foodLeft << endl;
+   cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
 }
 
 void testPath()
@@ -424,8 +542,7 @@ void testPath()
    getline(cin, input);
    cout << endl;
    int commaCount = count(input.begin(), input.end(), ',');
-   vector<int> path;
-   vector<double> speeds;
+   vector<int> path;  
    for (int i = 0; i < commaCount; i++)
    {
       int commaIndex = input.find(',');
@@ -445,66 +562,9 @@ void testPath()
       path.push_back(i);
       break;
    }
-
-   cout << "   " << left << setw(10) << "Name: " << setw(15) << "Speed: " << setw(15) << "Dist: " << setw(15) << "Time: " << setw(15) << "Fuel: " << setw(15) << "Oxyg: " << setw(15) << "Food: " << "Score: " << endl;
-   cout << endl;
-   cout << defaultfloat << setprecision(10);
-   int pathLength = path.size();
-   vector<array<double, 3>> pathData;
-   int node0 = 0;
-   double travelTime = 0;
-   for (int i = 0; i < pathLength; i++)
-   {
-      int node = path[i];
-      array<double, 3> previousNode;
-      if (i != 0) previousNode = pathData[i-1];
-      else previousNode = {MAX_FUEL, MAX_OXYGEN, MAX_FOOD};
-      double v, t, o, fo, d = calculateDistance(planets[node0].position, planets[node].position);
-      double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
-      double idealResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
-      switch (planets[node].resupply)
-      {
-         case Resupply::OXYGEN:
-            v = idealResupplySpeed, t = d/v;
-            o = MAX_OXYGEN;
-            fo = previousNode[2] - Kl * t;
-            break;
-         case Resupply::FOOD:
-            v = idealResupplySpeed, t = d/v;
-            fo = MAX_FOOD;
-            o = previousNode[1] - Kl * t;
-            break;
-         case Resupply::NONE:
-            v = idealSpeed, t = d/v;
-            o = previousNode[1] - Kl * t, fo = previousNode[2] - Kl * t;
-            break;
-      }
-      double fu = previousNode[0] - Kf * d * v * v;
-      double s = t-(fu+o+fo);
-      pathData.push_back({fu, o, fo});
-      travelTime += t;
-      if (edgeInHostileRadius(node0, node)) cout << "INVALID PATH - edge crosses hostile radius" << endl;
-      cout << i+1 << ") " 
-           << left
-           << setw(6) << planets[node].name << "    " 
-           << setw(11) << v << "    " 
-           << setw(11) << d << "    " 
-           << setw(11) << t << "    " 
-           << setw(11) << fu << "    " 
-           << setw(11) << o << "    " 
-           << setw(11) << fo << "    " 
-           << setw(11) << s
-           << endl;
-      node0 = node;
-   }
-   cout << endl;
-   array<double, 3> lastNode = pathData[pathLength - 1];
-   double fuelLeft = lastNode[0], oxygenLeft = lastNode[1], foodLeft = lastNode[2];
-   cout << "Travel time: " << travelTime << endl;
-   cout << "Remaining fuel: " << fuelLeft << endl;
-   cout << "Remaining oxygen: " << oxygenLeft << endl;
-   cout << "Remaining food: " << foodLeft << endl;
-   cout << "Final score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
+   int pathLength = commaCount + 1;
+   vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
+   if (optimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
 }
 
 int main()
@@ -524,42 +584,11 @@ int main()
 
    initializeLists();
    calculatePath();
-   
-   cout << "   " << left << setw(10) << "Name: " << setw(15) << "Speed: " << setw(15) << "Dist: " << setw(15) << "Time: " << setw(15) << "Fuel: " << setw(15) << "Oxyg: " << setw(15) << "Food: " << "Score: " << endl;
-   cout << endl;
-   cout << setprecision(10);
-   NodeData& lastNode = nodes[nodeCount - 1];
-   vector<int>& path = lastNode.bestPath;
-   vector<double>& speeds = lastNode.speeds;
+   vector<int>& path = nodes.back().bestPath;
    int pathLength = path.size();
-   int node0 = 0;
-   for (int i = 0; i < pathLength; i++)
-   {
-      int node = path[i];
-      NodeData& nodeData = nodes[node];
-      double v = speeds[i], d = calculateDistance(planets[node0].position, planets[node].position), t = d/v;
-      double fu = nodeData.fuel, o = nodeData.oxygen, fo = nodeData.food, s = t-(fu+o+fo);
-      cout << i+1 << ") " 
-           << left
-           << setw(6) << planets[node].name << "    " 
-           << setw(11) << v << "    " 
-           << setw(11) << d << "    " 
-           << setw(11) << t << "    " 
-           << setw(11) << fu << "    " 
-           << setw(11) << o << "    " 
-           << setw(11) << fo << "    " 
-           << setw(11) << s 
-           << endl;
-      node0 = node;
-   }
-   cout << endl;
-   double travelTime = lastNode.time, fuelLeft = lastNode.fuel, oxygenLeft = lastNode.oxygen, foodLeft = lastNode.food;
-   cout << "Travel time: " << travelTime << endl;
-   cout << "Remaining fuel: " << fuelLeft << endl;
-   cout << "Remaining oxygen: " << oxygenLeft << endl;
-   cout << "Remaining food: " << foodLeft << endl;
-   cout << "Final score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
-   cout << endl;
+   vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
+   if (optimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
+   else cout << "Invalid path" << endl;
 
    // Convert microseconds to milliseconds, fix 3 decimal places
    long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
