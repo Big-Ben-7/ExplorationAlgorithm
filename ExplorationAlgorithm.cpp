@@ -19,6 +19,8 @@ using namespace std;
 
 // Use enum instead of string for resupply to improve performance
 enum class Resupply { NONE, OXYGEN, FOOD };
+enum class ResupplyType { noneBefore, oxygenBefore, foodBefore, noneMiddle, oxygenMiddle, foodMiddle, noneAfter };
+
 struct Point
 {
    double x, y;
@@ -51,6 +53,12 @@ struct Edge
    {
       node1 = n1, node2 = n2, distance = d;
    }
+   bool operator<(const Edge& other) const
+   {
+      int other1 = other.node1;
+      if (node1 == other1) return node2 < other.node2;
+      else return node1 < other1;
+   }
 };
 // Stores cost, resource consumption, and order of travel and speed for best path to node
 struct NodeData
@@ -68,7 +76,7 @@ struct NodeData
 };
 vector<vector<double>> nodeDistances;
 vector<PlanetData> planets;
-int nodeCount, edgeCount;
+int nodeCount;
 chrono::steady_clock::time_point startTime;
 // Edge list used to efficiently represent graph
 vector<Edge> edgeList;
@@ -322,16 +330,18 @@ void initializeLists()
          // Each planet connected to all other non-hostile planets
          if (edgeInHostileRadius(i, j)) continue;
          double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
-         edgeList.emplace_back(i, j, distance);
-         edgeList.emplace_back(j, i, distance);
+         // Eliminate edges from target planet for efficiency
+         if (i != nodeCount - 1) edgeList.emplace_back(i, j, distance);
+         if (j != nodeCount - 1) edgeList.emplace_back(j, i, distance);
       }
    }
-   edgeCount = edgeList.size();
+   sort(edgeList.begin(), edgeList.end());
 }
 
 // Stage 1: Implement modified Bellman-Ford algorithm to find optimal path
 void calculatePath()
 {
+   int edgeCount = edgeList.size();
    bool unrelaxed = true;
    // Terminates once one iteration has passed with no relaxations
    while (unrelaxed)
@@ -390,115 +400,95 @@ void calculatePath()
    }
 }
 
+void optimizeSpeed(double& v1, double& v2, const double d1, const double d2, const ResupplyType resupplyType, const double initialFuel, const double initialOxygen, const double initialFood)
+{
+   
+}
+
 // Stage 2: Optimize resource usage given the known path
 int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
 {
+   int error = 0;
+   bool foundOxygenResupply = false, foundFoodResupply = false;
+   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
    int pathLength = path.size();
-   int lastFoodResupply = -1, lastOxygenResupply = -1;
+   vector<ResupplyType> resupplyTypes = vector<ResupplyType>(pathLength);
    for (int i = pathLength - 1; i >= 0; i--)
    {
+      double speed, t, consumed, distance = nodeDistances[path[i]][(i == 0) ? 0 : path[i-1]];
       switch (planets[path[i]].resupply)
       {
          case Resupply::OXYGEN:
-            if (lastOxygenResupply == -1) lastOxygenResupply = i;
+            if (!foundOxygenResupply) foundOxygenResupply = true;
+            if (!foundFoodResupply)
+            {
+               resupplyTypes[i] = ResupplyType::oxygenMiddle;
+               speed = speeds[i] = singleResupplySpeed;
+            }
+            else
+            {
+               resupplyTypes[i] = ResupplyType::oxygenBefore;
+               speed = speeds[i] = doubleResupplySpeed;
+            }
+            t = distance/speed, consumed = Kl * t;
+            foodLeft -= consumed;
+            if (error == 0 && (consumed > oxygenLeft - 0.0001 || foodLeft < 0.0001)) error = -1;
+            oxygenLeft = MAX_OXYGEN;
             break;
          case Resupply::FOOD:
-            if (lastFoodResupply == -1) lastFoodResupply = i;
+            if (!foundFoodResupply) foundFoodResupply = true;
+            if (!foundOxygenResupply)
+            {
+               resupplyTypes[i] = ResupplyType::foodMiddle;
+               speed = speeds[i] = singleResupplySpeed;
+            }
+            else
+            {
+               resupplyTypes[i] = ResupplyType::foodBefore;
+               speed = speeds[i] = doubleResupplySpeed;
+            }
+            t = distance/speed, consumed = Kl * t;
+            oxygenLeft -= consumed;
+            if (error == 0 && (consumed > foodLeft - 0.0001 || oxygenLeft < 0.0001)) error = -1;
+            foodLeft = MAX_FOOD;
             break;
          case Resupply::NONE:
+            if (foundOxygenResupply && foundFoodResupply)
+            {
+               resupplyTypes[i] = ResupplyType::noneBefore;
+               speed = speeds[i] = doubleResupplySpeed;
+            }
+            else if (foundOxygenResupply != foundFoodResupply)
+            {
+               resupplyTypes[i] = ResupplyType::noneMiddle;
+               speed = speeds[i] = singleResupplySpeed;
+            }
+            else
+            {
+               resupplyTypes[i] = ResupplyType::noneAfter;
+               speed = speeds[i] = idealSpeed;
+            }
+            t = distance/speed, consumed = Kl * t;
+            foodLeft -= consumed, oxygenLeft -= consumed;
+            if (error == 0 && (oxygenLeft < 0.0001 || foodLeft < 0.0001)) error = -1;
             break;
       }
-      if (lastOxygenResupply != -1 && lastFoodResupply != -1) break;
+      fuelLeft -= Kf * distance * speed * speed;
+      fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
    }
-   int resupply1 = min(lastFoodResupply, lastOxygenResupply);
-   int resupply2 = max(lastFoodResupply, lastOxygenResupply);
-   double totalFuelConsumed = 0;
+   if (error == 0 || fuelLeft >= 0.0001) return 0;
+   fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
+   double speed, nextSpeed;
+   pathLength --;
    int node0 = 0;
-   for (int i = 0; i <= resupply1; i++)
+   for (int i = 0; i < pathLength; i++)
    {
-      // Before last oxygen and food refill, optimize speed based on fuel
-      speeds[i] = doubleResupplySpeed;
       int node = path[i];
-      totalFuelConsumed += Kf * nodeDistances[node0][node] * doubleResupplySpeed * doubleResupplySpeed;
+      optimizeSpeed(speed, nextSpeed, nodeDistances[node0][node], nodeDistances[node][path[i+1]], resupplyTypes[i], fuelLeft, oxygenLeft, foodLeft);
+      speeds[i] = speed;
       node0 = node;
    }
-   for (int i = resupply1 + 1; i <= resupply2; i++)
-   {
-      // Before last oxygen/food refill, optimize speed based on fuel and food/oxygen
-      speeds[i] = singleResupplySpeed;
-      int node = path[i];
-      totalFuelConsumed += Kf * nodeDistances[node0][node] * singleResupplySpeed * singleResupplySpeed;
-      node0 = node;
-   }
-   for (int i = resupply2 + 1; i < pathLength; i++)
-   {
-      // After refills, optimize speed based on fuel, food, and oxygen
-      speeds[i] = idealSpeed;
-      int node = path[i];
-      totalFuelConsumed += Kf * nodeDistances[node0][node] * idealSpeed * idealSpeed;
-      node0 = node;
-   }
-   // If fuel drops to 0, reduce speed by constant factor
-   double speedFactor = sqrt((MAX_FUEL - 0.001) / totalFuelConsumed);
-   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
-   node0 = 0;
-   if (totalFuelConsumed >= MAX_FUEL)
-   {
-      for (int i = 0; i < pathLength; i++)
-      {
-         int node = path[i];
-         speeds[i] *= speedFactor;
-         double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed;
-         double consumed = Kl * t, fuelConsumed = Kf * distance * speed * speed;
-         fuelLeft -= fuelConsumed;
-         // If oxygen or food then drop to 0, path is invalid because food/oxygen and fuel have opposite dependencies on speed
-         if (consumed > foodLeft - 0.001 || consumed > oxygenLeft - 0.001) return -1;
-         switch (planets[node].resupply)
-         {
-            case Resupply::OXYGEN:
-               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
-               break;
-            case Resupply::FOOD:
-               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
-               break;
-            case Resupply::NONE:
-               oxygenLeft -= consumed, foodLeft -= consumed;
-               break;
-         }
-         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
-         node0 = node;
-      }
-   } 
-   else 
-   {
-      for (int i = 0; i < pathLength; i++)
-      {
-         int node = path[i];
-         double distance = nodeDistances[node0][node], speed = speeds[i];
-         double minOxygenSpeed = distance / ((oxygenLeft - 0.01) / Kl);
-         double minFoodSpeed = distance / ((foodLeft - 0.01) / Kl);
-         double minSpeed = min(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
-         if (minSpeed > maxSpeed) return -1;
-         if (speed < minSpeed) speeds[i] = speed = minSpeed;
-         double consumed = Kl * distance / speed, fuelConsumed = Kf * distance * speed * speed;
-         fuelLeft -= fuelConsumed;
-         switch (planets[node].resupply)
-         {
-            case Resupply::OXYGEN:
-               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
-               break;
-            case Resupply::FOOD:
-               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
-               break;
-            case Resupply::NONE:
-               oxygenLeft -= consumed, foodLeft -= consumed;
-               break;
-         }
-         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
-         node0 = node;
-      }
-   }
-   return 0;
+   speeds[pathLength + 1] = nextSpeed;
 }
 
 void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
@@ -580,7 +570,7 @@ int main()
    cout << endl;
    cout << "Welcome Mission Control!" << endl;
    cout << endl;
-   cout << "Use these instructions to begin stress-testing:" << endl;;
+   cout << "Use these instructions to begin stress-testing:" << endl;
    cout << "Put the map CSV file in the same directory/folder as this program and then simply input the file name below (e.g., ExampleMap.csv)." << endl;
    cout << "If the map cannot be placed in the same folder, the full file path can be provided:" << endl;
    cout << "e.g., C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
