@@ -1,15 +1,14 @@
 Planet Name,x,y,type,resupply,hostile_radius
 
 Earth,0,0,neutral,,0 
-A,1000,200,neutral,oxygen,0 
-B,2000,500,neutral,food,0 
-
+A,100,20,neutral,oxygen,0 
+B,200,50,neutral,food,0 
 C,250,-100,neutral,,0 
 D,350,-50,neutral,oxygen,0 
 E,450,100,neutral,food,0 
 F,550,150,neutral,,0 
-G,650,-50,neutral,oxygen,0 
-H,300,50,hostile,,100
+G,650,-50,neutral,food,0 
+H,300,-50,hostile,,100
 I,600,150,hostile,,100
 J,700,100,neutral,food,0 
 K,800,0,neutral,oxygen,0 

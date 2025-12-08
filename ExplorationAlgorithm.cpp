@@ -18,9 +18,8 @@
 using namespace std;
 
 // Use enum instead of string for resupply to improve performance
-enum class Resupply { NONE, OXYGEN, FOOD };
-enum class ResupplyType { noneBefore, oxygenBefore, foodBefore, noneMiddle, oxygenMiddle, foodMiddle, noneAfter };
-
+enum class Resupply { NONE, OXYGEN, FOOD, BOTH };
+enum class FunctionType { CURVED, STRAIGHT };
 struct Point
 {
    double x, y;
@@ -129,6 +128,32 @@ double calculateDistance(const Point pos1, const Point pos2)
    double dx = pos2.x - pos1.x;
    double dy = pos2.y - pos1.y;
    return sqrt(dx * dx + dy * dy);
+}
+// Bisection algorithm to determine roots of function
+double bisection(double a, double b, const double x0, const double y0, const double r, double (*func)(const double, const double, const double, const double), const double tolerance = 1e-6)
+{
+   double c;
+   c = 0.5 * (a + b);
+   double fa = func(a, x0, y0, r);
+   double fb = func(b, x0, y0, r);
+   double accuracy = tolerance * 1e-3;
+   while (fabs(b - a) > tolerance * c)
+   {
+      double fc = func(c, x0, y0, r);
+      if (fabs(fc) < accuracy) return c;
+      if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0)) 
+      {
+         a = c;
+         fa = fc;
+      } 
+      else 
+      {
+         b = c;
+         fb = fc;
+      }
+      c = 0.5 * (a + b);
+   }
+   return c;
 }
 
 int parseCSV()
@@ -375,7 +400,7 @@ void calculatePath()
                oxygenConsumed = Kl*t;
                oxygenLeft = currentOxygen - oxygenConsumed;
                break;
-            case Resupply::NONE:
+            default:
                speed = idealSpeed, t = d/speed;
                oxygenConsumed = foodConsumed = Kl*t;
                oxygenLeft = currentOxygen - oxygenConsumed;
@@ -400,95 +425,516 @@ void calculatePath()
    }
 }
 
-void optimizeSpeed(double& v1, double& v2, const double d1, const double d2, const ResupplyType resupplyType, const double initialFuel, const double initialOxygen, const double initialFood)
+double derivFunc(const double theta, const double x0, const double y0, const double r)
 {
-   
+   double cosTheta = cos(theta), sinTheta = sin(theta);
+   return x0 * cosTheta - y0 * sinTheta - r * (cosTheta * cosTheta - sinTheta * sinTheta);
 }
 
-// Stage 2: Optimize resource usage given the known path
+double func(const double theta, const double x0, const double y0, const double r)
+{
+   double cosTheta = cos(theta), sinTheta = sin(theta);
+   return x0 * sinTheta + y0 * cosTheta - r * sinTheta * cosTheta;
+}
+
+int getIdealSpeed(double& v1, double& v2, double& score, const double m, const double c, const double x1, const double y1, const double x2, 
+                  const double y2, const double d1, const double d2, const double r, const FunctionType oxygenType, const FunctionType foodType)
+{
+   double xi1, xi2;
+   if (oxygenType == FunctionType::CURVED) xi1 = x1 + y1 / m;
+   else
+   {
+      double m2 = y1 / x1;
+      if (m >= m2) xi1 = x1;
+      else xi1 = y1 / m;
+   }
+   if (foodType == FunctionType::CURVED) xi2 = x2 + y2 / m;
+   else
+   {
+      double m2 = y2 / x2;
+      if (m >= m2) xi2 = x2;
+      else xi2 = y2 / m;
+   }
+   double innerIntersection = max(xi1, xi2), outerIntersection = r / sqrt(1 + m * m);
+   if (innerIntersection >= outerIntersection) return -1;
+   double beta = m * sqrt(d1 / d2); // Ratio of velocities
+   double v1Ideal = cbrt((d1 * (1 + c) + 1/beta * d2 * (1 + 2 * Kl)) / (2 * (Kf * d1 + beta * beta * Kf * d2)));
+   double rootd1 = sqrt(d1), v1Min = innerIntersection / rootd1 * 1.0001, v1Max = outerIntersection / rootd1 * 0.9999;
+   int returnVal;
+   if (v1Ideal < v1Min)
+   {
+      v1 = v1Min;
+      returnVal = 0;
+   }
+   else if (v1Ideal > v1Max)
+   {
+      v1 = v1Max;
+      returnVal = 2;
+   }
+   else
+   {
+      v1 = v1Ideal;
+      returnVal = 1;
+   }
+   v2 = beta * v1;
+   score = d1/v1*(1+c) + Kf*d1*v1*v1 + d2/v2*(1+2*Kl) + Kf*d2*v2*v2;
+   printf("%g %g %g %g %g %g %g %g %g\n", x1, y1, x2, y2, r, d1, d2,innerIntersection, outerIntersection);
+   cout << v1 << ", " << v2 << ", " << score << ", " << returnVal << endl;
+   return returnVal;
+}
+
+int optimizeSpeed(double& v1, double& v2, const double d1, const double d2, const Resupply resupplyType, const Resupply resupplyAfter, const double initialFuel, const double initialOxygen, const double initialFood)
+{
+   int returnVal = -1;
+   double rootd1 = sqrt(d1), rootd2 = sqrt(d2);
+   double kd1 = Kl * rootd1 * d1, kd2 = Kl * rootd2 * d2;
+   double xOxygen, yOxygen, xFood, yFood, r = sqrt(initialFuel / Kf);
+   double idealSlope, minSlope, maxSlope, score, c;
+   FunctionType oxygenType, foodType;;
+   switch (resupplyType)
+   {
+      case Resupply::OXYGEN:
+      {
+         xOxygen = kd1 / initialOxygen, yOxygen = kd2 / initialOxygen;
+         if (xOxygen * xOxygen + yOxygen * yOxygen >= r * r) return -1;
+         xFood = kd1 / initialFood, yFood = kd2 / initialFood;
+         if (xFood * xFood + yFood * yFood >= r * r) return -1;
+         double thetaMin = bisection(0, M_PI_2, xFood, yFood, r, derivFunc);
+         double root1 = bisection(0, thetaMin, xFood, yFood, r, func), root2 = bisection(thetaMin, M_PI_2, xFood, yFood, r, func);
+         double theta1 = max(asin(yOxygen/r), root1), theta2 = min(acos(xOxygen/r), root2);
+         minSlope = tan(theta1), maxSlope = tan(theta2);
+         switch (resupplyAfter)
+         {
+            case Resupply::FOOD:
+            case Resupply::BOTH:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl));
+               c = 0;
+               break;
+            default:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl) / (1 + Kl));
+               c = Kl;
+               break;
+         }
+         oxygenType = FunctionType::STRAIGHT, foodType = FunctionType::CURVED;
+         break;
+      }
+      case Resupply::FOOD:
+      {
+         xOxygen = kd1 / initialOxygen, yOxygen = kd2 / initialOxygen;
+         if (xOxygen * xOxygen + yOxygen * yOxygen >= r * r) return -1;
+         xFood = kd1 / initialFood, yFood = kd2 / initialFood;
+         if (xFood * xFood + yFood * yFood >= r * r) return -1;
+         double thetaMin = bisection(0, M_PI_2, xOxygen, yOxygen, r, derivFunc);
+         double root1 = bisection(0, thetaMin, xOxygen, yOxygen, r, func), root2 = bisection(thetaMin, M_PI_2, xOxygen, yOxygen, r, func);
+         double theta1 = max(asin(yFood/r), root1), theta2 = min(acos(xFood/r), root2);
+         minSlope = tan(theta1), maxSlope = tan(theta2);
+         switch (resupplyAfter)
+         {
+            case Resupply::OXYGEN:
+            case Resupply::BOTH:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl));
+               c = 0;
+               break;
+            default:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl) / (1 + Kl));
+               c = Kl;
+               break;
+         }
+         oxygenType = FunctionType::CURVED, foodType = FunctionType::STRAIGHT;
+         break;
+      }
+      case Resupply::NONE:
+      {
+         xOxygen = kd1 / initialOxygen, yOxygen = kd2 / initialOxygen;
+         if (xOxygen * xOxygen + yOxygen * yOxygen >= r * r) return -1;
+         xFood = kd1 / initialFood, yFood = kd2 / initialFood;
+         if (xFood * xFood + yFood * yFood >= r * r) return -1;
+         double thetaMin = bisection(0, M_PI_2, xFood, yFood, r, derivFunc);
+         double root1Food = bisection(0, thetaMin, xFood, yFood, r, func), root2Food = bisection(thetaMin, M_PI_2, xFood, yFood, r, func);
+         thetaMin = bisection(0, M_PI_2, xOxygen, yOxygen, r, derivFunc);
+         double root1Oxygen = bisection(0, thetaMin, xOxygen, yOxygen, r, func), root2Oxygen = bisection(thetaMin, M_PI_2, xOxygen, yOxygen, r, func);
+         double theta1 = max(root1Food, root1Oxygen), theta2 = min(root2Food, root2Oxygen);
+         minSlope = tan(theta1), maxSlope = tan(theta2);
+         switch (resupplyAfter)
+         {
+            case Resupply::FOOD:
+            case Resupply::OXYGEN:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl) / (1 + Kl));
+               c = Kl;
+               break;
+            case Resupply::BOTH:
+               idealSlope = rootd2 / rootd1 * cbrt((1 + 2 * Kl));
+               c = 0;
+               break;
+            default:
+               idealSlope = rootd2 / rootd1;
+               c = 2 * Kl;
+               break;
+         }
+         oxygenType = FunctionType::CURVED, foodType = FunctionType::CURVED;
+         break;
+      }
+      default: return -1;
+   }
+
+   //double idealSpeed = cbrt(0.5 * (1 + c)/Kf);
+   minSlope *= 1.0001, maxSlope *= 0.9999;
+   if (idealSlope < minSlope) idealSlope = minSlope;
+   else if (idealSlope > maxSlope) idealSlope = maxSlope;
+   returnVal = getIdealSpeed(v1, v2, score, idealSlope, c, xOxygen, yOxygen, xFood, yFood, d1, d2, r, FunctionType::STRAIGHT, FunctionType::CURVED);
+   return returnVal;
+}
+
+// Stage 2: Optimize resource usage given the known path with 3 methods (which increase in both robustness and computation time)
 int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
 {
    int error = 0;
    bool foundOxygenResupply = false, foundFoodResupply = false;
-   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
    int pathLength = path.size();
-   vector<ResupplyType> resupplyTypes = vector<ResupplyType>(pathLength);
+   vector<Resupply> resupplyTypes = vector<Resupply>(pathLength), resupplyAfter = vector<Resupply>(pathLength);
+   // Iterate backward to find last oxygen and food resupplies
+   // Method 1: set ideal speed by disregard both, one, or none of the Kl terms if node is before both, one or none of the resupplies
    for (int i = pathLength - 1; i >= 0; i--)
    {
-      double speed, t, consumed, distance = nodeDistances[path[i]][(i == 0) ? 0 : path[i-1]];
-      switch (planets[path[i]].resupply)
+      Resupply resupply = resupplyTypes[i] = planets[path[i]].resupply;
+      switch (resupply)
       {
          case Resupply::OXYGEN:
-            if (!foundOxygenResupply) foundOxygenResupply = true;
-            if (!foundFoodResupply)
+            if (!foundOxygenResupply)
             {
-               resupplyTypes[i] = ResupplyType::oxygenMiddle;
-               speed = speeds[i] = singleResupplySpeed;
+               foundOxygenResupply = true;
+               if (!foundFoodResupply)
+               {
+                  resupplyAfter[i] = Resupply::NONE;
+                  speeds[i] = singleResupplySpeed;
+               }
+               else
+               {
+                  resupplyAfter[i] = Resupply::FOOD;
+                  speeds[i] = doubleResupplySpeed;
+               }
             }
             else
             {
-               resupplyTypes[i] = ResupplyType::oxygenBefore;
-               speed = speeds[i] = doubleResupplySpeed;
+               if (!foundFoodResupply)
+               {
+                  resupplyAfter[i] = Resupply::OXYGEN;
+                  speeds[i] = singleResupplySpeed;
+               }
+               else
+               {
+                  resupplyAfter[i] = Resupply::BOTH;
+                  speeds[i] = doubleResupplySpeed;
+               }
             }
-            t = distance/speed, consumed = Kl * t;
+            break;
+         case Resupply::FOOD:
+            if (!foundFoodResupply)
+            {
+               foundFoodResupply = true;
+               if (!foundOxygenResupply)
+               {
+                  resupplyAfter[i] = Resupply::NONE;
+                  speeds[i] = singleResupplySpeed;
+               }
+               else
+               {
+                  resupplyAfter[i] = Resupply::OXYGEN;
+                  speeds[i] = doubleResupplySpeed;
+               }
+            }
+            else
+            {
+               foundFoodResupply = true;
+               if (!foundOxygenResupply)
+               {
+                  resupplyAfter[i] = Resupply::FOOD;
+                  speeds[i] = singleResupplySpeed;
+               }
+               else
+               {
+                  resupplyAfter[i] = Resupply::BOTH;
+                  speeds[i] = doubleResupplySpeed;
+               }
+            }
+            break;
+         default:
+            if (foundOxygenResupply && foundFoodResupply)
+            {
+               resupplyAfter[i] = Resupply::BOTH;
+               speeds[i] = doubleResupplySpeed;
+            }
+            else if (foundOxygenResupply && !foundFoodResupply)
+            {
+               resupplyAfter[i] = Resupply::OXYGEN;
+               speeds[i] = singleResupplySpeed;
+            }
+            else if (foundFoodResupply && !foundOxygenResupply)
+            {
+               resupplyAfter[i] = Resupply::FOOD;
+               speeds[i] = singleResupplySpeed;
+            }
+            else
+            {
+               resupplyAfter[i] = Resupply::NONE;
+               speeds[i] = idealSpeed;
+            }
+            break;
+      }
+   }
+   // It can be mathematically proven (eg. with Lagrange multipliers) that the ideal speed is the same for all nodes with the same resupplyAfter type
+   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
+   double totalDistance = 0;
+   int node0 = 0;
+   for (int i = 0; i < pathLength; i++)
+   {
+      int node = path[i];
+      double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed, consumed = Kl * t;
+      Resupply resupply = resupplyTypes[i] = planets[node].resupply;
+      switch (resupply)
+      {
+         case Resupply::OXYGEN:
             foodLeft -= consumed;
             if (error == 0 && (consumed > oxygenLeft - 0.0001 || foodLeft < 0.0001)) error = -1;
             oxygenLeft = MAX_OXYGEN;
             break;
          case Resupply::FOOD:
-            if (!foundFoodResupply) foundFoodResupply = true;
-            if (!foundOxygenResupply)
-            {
-               resupplyTypes[i] = ResupplyType::foodMiddle;
-               speed = speeds[i] = singleResupplySpeed;
-            }
-            else
-            {
-               resupplyTypes[i] = ResupplyType::foodBefore;
-               speed = speeds[i] = doubleResupplySpeed;
-            }
-            t = distance/speed, consumed = Kl * t;
             oxygenLeft -= consumed;
             if (error == 0 && (consumed > foodLeft - 0.0001 || oxygenLeft < 0.0001)) error = -1;
             foodLeft = MAX_FOOD;
             break;
-         case Resupply::NONE:
-            if (foundOxygenResupply && foundFoodResupply)
-            {
-               resupplyTypes[i] = ResupplyType::noneBefore;
-               speed = speeds[i] = doubleResupplySpeed;
-            }
-            else if (foundOxygenResupply != foundFoodResupply)
-            {
-               resupplyTypes[i] = ResupplyType::noneMiddle;
-               speed = speeds[i] = singleResupplySpeed;
-            }
-            else
-            {
-               resupplyTypes[i] = ResupplyType::noneAfter;
-               speed = speeds[i] = idealSpeed;
-            }
-            t = distance/speed, consumed = Kl * t;
+         default:
             foodLeft -= consumed, oxygenLeft -= consumed;
             if (error == 0 && (oxygenLeft < 0.0001 || foodLeft < 0.0001)) error = -1;
             break;
       }
       fuelLeft -= Kf * distance * speed * speed;
       fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+      totalDistance += distance;
+      node0 = node;
    }
-   if (error == 0 || fuelLeft >= 0.0001) return 0;
+   //if (error == 0 && fuelLeft >= 0.0001) return 0;
+
+   /*// Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
+   double totalFuelConsumed = MAX_FUEL - fuelLeft;
+   double speedFactor = sqrt((MAX_FUEL - 0.0001) / (totalFuelConsumed));
    fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
-   double speed, nextSpeed;
-   pathLength --;
-   int node0 = 0;
+   node0 = error = 0;
+   if (totalFuelConsumed >= MAX_FUEL)
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         speeds[i] *= speedFactor;
+         double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed;
+         double consumed = Kl * t, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         if (consumed > foodLeft - 0.0001 || consumed > oxygenLeft - 0.0001)
+         {
+            error = -1;
+            break;
+         }
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            default:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   } 
+   else 
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         double distance = nodeDistances[node0][node], speed = speeds[i];
+         double minOxygenSpeed = distance / ((oxygenLeft - 0.0001) / Kl);
+         double minFoodSpeed = distance / ((foodLeft - 0.0001) / Kl);
+         double minSpeed = min(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
+         if (minSpeed > maxSpeed)
+         {
+            error = -1;
+            break;
+         }
+         if (speed < minSpeed) speeds[i] = speed = minSpeed;
+         double consumed = Kl * distance / speed, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            default:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   }
+   if (error == 0) return 0;*/
+
+   // Method 3: If Method 2 (constant factor fails), optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
+   fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
+   double cumulativeDistance = 0;
+   node0 = 0;
    for (int i = 0; i < pathLength; i++)
    {
       int node = path[i];
-      optimizeSpeed(speed, nextSpeed, nodeDistances[node0][node], nodeDistances[node][path[i+1]], resupplyTypes[i], fuelLeft, oxygenLeft, foodLeft);
-      speeds[i] = speed;
+      double speed, nextSpeed, distance = nodeDistances[node0][node];
+      cumulativeDistance += distance;
+      if (i < pathLength - 1)
+      {
+         int rv = optimizeSpeed(speed, nextSpeed, distance, totalDistance - cumulativeDistance, resupplyTypes[i], resupplyAfter[i], fuelLeft, oxygenLeft, foodLeft);
+         //cout << i << ", "  << distance << ", " << totalDistance-cumulativeDistance << ", " << (int) resupplyTypes[i] << ", " << (int) resupplyAfter[i] << ", " << fuelLeft << ", " << oxygenLeft << ", " << foodLeft << endl;
+         if (rv == -1) return -1;
+         speeds[i] = speed;
+      }
+      else speed = speeds[i] = nextSpeed;
+      double t = distance / speed, consumed = Kl * t;
+
+      switch (planets[node].resupply)
+      {
+         case Resupply::OXYGEN:
+            foodLeft -= consumed;
+            oxygenLeft = MAX_OXYGEN;
+            break;
+         case Resupply::FOOD:
+            oxygenLeft -= consumed;
+            foodLeft = MAX_FOOD;
+            break;
+         default:
+            foodLeft -= consumed, oxygenLeft -= consumed;
+            if (error == 0 && (oxygenLeft < 0.0001 || foodLeft < 0.0001)) error = -1;
+            break;
+      }
+      fuelLeft -= Kf * distance * speed * speed;
+      fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
       node0 = node;
    }
-   speeds[pathLength + 1] = nextSpeed;
+   if (fuelLeft > 0 && oxygenLeft > 0 && foodLeft > 0) return 0;
+   else return -1;
+}
+
+int oldOptimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
+{
+   int pathLength = path.size();
+   int lastFoodResupply = -1, lastOxygenResupply = -1;
+   for (int i = pathLength - 1; i >= 0; i--)
+   {
+      switch (planets[path[i]].resupply)
+      {
+         case Resupply::OXYGEN:
+            if (lastOxygenResupply == -1) lastOxygenResupply = i;
+            break;
+         case Resupply::FOOD:
+            if (lastFoodResupply == -1) lastFoodResupply = i;
+            break;
+         default:
+            break;
+      }
+      if (lastOxygenResupply != -1 && lastFoodResupply != -1) break;
+   }
+   int resupply1 = min(lastFoodResupply, lastOxygenResupply);
+   int resupply2 = max(lastFoodResupply, lastOxygenResupply);
+   double totalFuelConsumed = 0;
+   int node0 = 0;
+   for (int i = 0; i <= resupply1; i++)
+   {
+      // Before last oxygen and food refill, optimize speed based on fuel
+      speeds[i] = doubleResupplySpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * doubleResupplySpeed * doubleResupplySpeed;
+      node0 = node;
+   }
+   for (int i = resupply1 + 1; i <= resupply2; i++)
+   {
+      // Before last oxygen/food refill, optimize speed based on fuel and food/oxygen
+      speeds[i] = singleResupplySpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * singleResupplySpeed * singleResupplySpeed;
+      node0 = node;
+   }
+   for (int i = resupply2 + 1; i < pathLength; i++)
+   {
+      // After refills, optimize speed based on fuel, food, and oxygen
+      speeds[i] = idealSpeed;
+      int node = path[i];
+      totalFuelConsumed += Kf * nodeDistances[node0][node] * idealSpeed * idealSpeed;
+      node0 = node;
+   }
+   // If fuel drops to 0, reduce speed by constant factor
+   double speedFactor = sqrt((MAX_FUEL - 0.0001) / totalFuelConsumed);
+   double fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
+   node0 = 0;
+   if (totalFuelConsumed >= MAX_FUEL)
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         speeds[i] *= speedFactor;
+         double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed;
+         double consumed = Kl * t, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         // If oxygen or food then drop to 0, path is invalid because food/oxygen and fuel have opposite dependencies on speed
+         if (consumed > foodLeft - 0.0001 || consumed > oxygenLeft - 0.0001) return -1;
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            default:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   } 
+   else 
+   {
+      for (int i = 0; i < pathLength; i++)
+      {
+         int node = path[i];
+         double distance = nodeDistances[node0][node], speed = speeds[i];
+         double minOxygenSpeed = distance / ((oxygenLeft - 0.0001) / Kl);
+         double minFoodSpeed = distance / ((foodLeft - 0.0001) / Kl);
+         double minSpeed = min(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
+         if (minSpeed > maxSpeed) return -1;
+         if (speed < minSpeed) speeds[i] = speed = minSpeed;
+         double consumed = Kl * distance / speed, fuelConsumed = Kf * distance * speed * speed;
+         fuelLeft -= fuelConsumed;
+         switch (planets[node].resupply)
+         {
+            case Resupply::OXYGEN:
+               oxygenLeft = MAX_OXYGEN, foodLeft -= consumed;
+               break;
+            case Resupply::FOOD:
+               foodLeft = MAX_FOOD, oxygenLeft -= consumed;
+               break;
+            default:
+               oxygenLeft -= consumed, foodLeft -= consumed;
+               break;
+         }
+         fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
+         node0 = node;
+      }
+   }
+   return 0;
 }
 
 void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, vector<double>& oxygen, vector<double>& food)
@@ -497,8 +943,8 @@ void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, 
    cout << "Map used: " << mapName << endl;
    cout << "Planet travel order (all values rounded to 4 decimals and in AU): " << endl;
    cout << endl;
-   cout << " " << right << setw(14) << "Planet: " << setw(14) << "Speed: " << setw(14) << "Dist: " << setw(14) << "Time: " << setw(14) << "Fuel: " << setw(14) << "Oxyg: " << setw(14) << "Food: " << setw(14) << "Score: " << endl;
-   cout << fixed << setprecision(6);
+   cout << " " << right << setw(14) << "Planet: " << setw(14) << "Speed: " << setw(14) << "Dist: " << setw(14) << "Total Time: " << setw(14) << "Fuel: " << setw(14) << "Oxyg: " << setw(14) << "Food: " << setw(14) << "Score: " << endl;
+   cout << fixed;
    int pathLength = path.size();
    int node0 = 0;
    double travelTime = 0;
@@ -506,26 +952,26 @@ void printData(vector<int>& path, vector<double>& speeds, vector<double>& fuel, 
    {
       int node = path[i];
       double d = nodeDistances[node0][node], v = speeds[i], t = d/v;
-      double fu = fuel[i], o = oxygen[i], fo = food[i], s = t - (fu + o + fo);
+      travelTime += t;
+      double fu = fuel[i], o = oxygen[i], fo = food[i], s = travelTime - (fu + o + fo);
       if (edgeInHostileRadius(node0, node)) cout << "DEBUG: Edge crosses hostile radius" << endl;
       cout << i + 1 << ") " 
            << right
            << setw(11) << planets[node].name << "   " 
-           << setw(11) << v << "   " 
-           << setw(11) << d << "   " 
-           << setw(11) << t << "   " 
+           << setw(11) << setprecision(9) << v << "   " 
+           << setw(11) << setprecision(6) << d << "   " 
+           << setw(11) << travelTime << "   " 
            << setw(11) << fu << "   " 
            << setw(11) << o << "   " 
            << setw(11) << fo << "   " 
            << setw(11) << s
            << endl;
-      travelTime += t;
       node0 = node;
    }
    cout << endl;
    cout << "Final stats: " << endl;
    double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
-   cout << "Travel time: " << travelTime << endl;
+   cout << "Total time: " << travelTime << endl;
    cout << "Remaining fuel: " << fuelLeft << endl;
    cout << "Remaining oxygen: " << oxygenLeft << endl;
    cout << "Remaining food: " << foodLeft << endl;
@@ -536,7 +982,7 @@ void testPath()
 {
    cout << endl;
    string input;
-   cout << "Path: ";
+   cout << "Path (New): ";
    getline(cin, input);
    cout << endl;
    int commaCount = count(input.begin(), input.end(), ',');
@@ -565,6 +1011,104 @@ void testPath()
    if (optimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
 }
 
+void oldTestPath()
+{
+   cout << endl;
+   string input, input2;
+   cout << "Path (Old): ";
+   getline(cin, input);
+   cout << "Speeds: ";
+   getline(cin, input2);
+   int commaCount = count(input.begin(), input.end(), ',');
+   vector<int> path;
+   vector<double> speeds;
+   for (int i = 0; i < commaCount; i++)
+   {
+      int commaIndex = input.find(',');
+      string planet = trim(input.substr(0, commaIndex));
+      input = input.substr(commaIndex + 1);
+      for (int i = 0; i < planets.size(); i++)
+      {
+         if (planets[i].name != planet) continue;
+         path.push_back(i);
+         break;
+      }
+      commaIndex = input2.find(',');
+      speeds.push_back(stod(trim(input2.substr(0, commaIndex))));
+      input2 = input2.substr(commaIndex + 1);
+   }
+   speeds.push_back(stod(trim(input2)));
+   string planet = trim(input);
+   for (int i = 0; i < planets.size(); i++)
+   {
+      if (planets[i].name != planet) continue;
+      path.push_back(i);
+      break;
+   }
+
+   cout << endl;
+   cout << "Map used: " << mapName << endl;
+   cout << "Planet travel order (all values rounded to 4 decimals and in AU): " << endl;
+   cout << endl;
+   cout << " " << right << setw(14) << "Planet: " << setw(14) << "Speed: " << setw(14) << "Dist: " << setw(14) << "Travel Time: " << setw(14) << "Fuel: " << setw(14) << "Oxyg: " << setw(14) << "Food: " << setw(14) << "Score: " << endl;
+   cout << fixed;
+   int pathLength = path.size();
+   vector<array<double, 3>> pathData;
+   int node0 = 0;
+   double travelTime = 0;
+   for (int i = 0; i < pathLength; i++)
+   {
+      int node = path[i];
+      array<double, 3> previousNode;
+      if (i != 0) previousNode = pathData[i-1];
+      else previousNode = {MAX_FUEL, MAX_OXYGEN, MAX_FOOD};
+      double v = speeds[i], t, o, fo, d = calculateDistance(planets[node0].position, planets[node].position);
+      switch (planets[node].resupply)
+      {
+         case Resupply::OXYGEN:
+            t = d/v;
+            o = MAX_OXYGEN;
+            fo = previousNode[2] - Kl * t;
+            break;
+         case Resupply::FOOD:
+            t = d/v;
+            fo = MAX_FOOD;
+            o = previousNode[1] - Kl * t;
+            break;
+         default:
+            t = d/v;
+            o = previousNode[1] - Kl * t, fo = previousNode[2] - Kl * t;
+            break;
+      }
+      double fu = previousNode[0] - Kf * d * v * v;
+      travelTime += t;
+      double s = travelTime-(fu+o+fo);
+      pathData.push_back({fu, o, fo});
+      if (edgeInHostileRadius(node0, node)) cout << "DEBUG: Edge crosses hostile radius" << endl;
+      cout << i + 1 << ") " 
+           << right
+           << setw(11) << planets[node].name << "   " 
+           << setw(11) << setprecision(9) << v << "   " 
+           << setw(11) << setprecision(6) << d << "   " 
+           << setw(11) << travelTime << "   " 
+           << setw(11) << fu << "   " 
+           << setw(11) << o << "   " 
+           << setw(11) << fo << "   " 
+           << setw(11) << s
+           << endl;
+      node0 = node;
+   }
+   cout << endl;
+   cout << "Final stats: " << endl;
+   array<double, 3> lastNode = pathData[pathLength - 1];
+   double fuelLeft = lastNode[0], oxygenLeft = lastNode[1], foodLeft = lastNode[2];
+   cout << "Travel time: " << travelTime << endl;
+   cout << "Remaining fuel: " << fuelLeft << endl;
+   cout << "Remaining oxygen: " << oxygenLeft << endl;
+   cout << "Remaining food: " << foodLeft << endl;
+   cout << "Final score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
+}
+
 int main()
 {
    cout << endl;
@@ -585,7 +1129,11 @@ int main()
    vector<int>& path = nodes.back().bestPath;
    int pathLength = path.size();
    vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
+   cout << "New: " << endl;
    if (optimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
+   cout << endl;
+   cout << "Old: " << endl;
+   if (oldOptimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
    else cout << "Invalid path" << endl;
 
    // Convert microseconds to milliseconds, fix 3 decimal places
@@ -593,5 +1141,9 @@ int main()
    cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
 
    cout << endl;
-   while (true) testPath();
+   while (true)
+   {
+      oldTestPath();
+      testPath();
+   }
 }
