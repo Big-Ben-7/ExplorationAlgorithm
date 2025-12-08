@@ -10,9 +10,9 @@
 
 #define Kf 0.15
 #define Kl 0.3
-#define MAX_FUEL 3000
-#define MAX_OXYGEN 2000
-#define MAX_FOOD 2000
+#define MAX_FUEL 52.75
+#define MAX_OXYGEN 16
+#define MAX_FOOD 16
 #define infinity (numeric_limits<double>::infinity())
 
 using namespace std;
@@ -64,7 +64,7 @@ struct NodeData
 {
    double minCost, fuel, food, oxygen;
    vector<int> bestPath;
-   NodeData(int initialCost)
+   NodeData(double initialCost)
    {
       minCost = initialCost;
       fuel = MAX_FUEL;
@@ -441,6 +441,7 @@ int getIdealSpeed(double& v1, double& v2, double& score, const double m, const d
                   const double y2, const double d1, const double d2, const double r, const FunctionType oxygenType, const FunctionType foodType)
 {
    double xi1, xi2;
+   cout << d1 << "," << d2 << "," << r << endl;
    if (oxygenType == FunctionType::CURVED) xi1 = x1 + y1 / m;
    else
    {
@@ -459,7 +460,8 @@ int getIdealSpeed(double& v1, double& v2, double& score, const double m, const d
    if (innerIntersection >= outerIntersection) return -1;
    double beta = m * sqrt(d1 / d2); // Ratio of velocities
    double v1Ideal = cbrt((d1 * (1 + c) + 1/beta * d2 * (1 + 2 * Kl)) / (2 * (Kf * d1 + beta * beta * Kf * d2)));
-   double rootd1 = sqrt(d1), v1Min = innerIntersection / rootd1 * 1.0001, v1Max = outerIntersection / rootd1 * 0.9999;
+   double di = 0.01 * (outerIntersection - innerIntersection);
+   double rootd1 = sqrt(d1), v1Min = (innerIntersection+di) / rootd1, v1Max = (outerIntersection-di) / rootd1;
    int returnVal;
    if (v1Ideal < v1Min)
    {
@@ -479,7 +481,7 @@ int getIdealSpeed(double& v1, double& v2, double& score, const double m, const d
    v2 = beta * v1;
    score = d1/v1*(1+c) + Kf*d1*v1*v1 + d2/v2*(1+2*Kl) + Kf*d2*v2*v2;
    printf("%g %g %g %g %g %g %g %g %g\n", x1, y1, x2, y2, r, d1, d2,innerIntersection, outerIntersection);
-   cout << v1 << ", " << v2 << ", " << score << ", " << returnVal << endl;
+   cout << m << ", " << v1 << ", " << v2 << ", " << score << ", " << returnVal << endl;
    return returnVal;
 }
 
@@ -490,6 +492,7 @@ int optimizeSpeed(double& v1, double& v2, const double d1, const double d2, cons
    double kd1 = Kl * rootd1 * d1, kd2 = Kl * rootd2 * d2;
    double xOxygen, yOxygen, xFood, yFood, r = sqrt(initialFuel / Kf);
    double idealSlope, minSlope, maxSlope, score, c;
+   cout << kd1/initialFood << ", " << kd2/initialFood << ", " << r << endl;
    FunctionType oxygenType, foodType;;
    switch (resupplyType)
    {
@@ -578,9 +581,11 @@ int optimizeSpeed(double& v1, double& v2, const double d1, const double d2, cons
    }
 
    //double idealSpeed = cbrt(0.5 * (1 + c)/Kf);
-   minSlope *= 1.0001, maxSlope *= 0.9999;
+   double ds = 0.01 * (maxSlope - minSlope);
+   minSlope += ds, maxSlope -= ds;
    if (idealSlope < minSlope) idealSlope = minSlope;
    else if (idealSlope > maxSlope) idealSlope = maxSlope;
+   printf("slope: %g %g %g %g %g\n", minSlope, maxSlope, idealSlope, rootd1, rootd2);
    returnVal = getIdealSpeed(v1, v2, score, idealSlope, c, xOxygen, yOxygen, xFood, yFood, d1, d2, r, FunctionType::STRAIGHT, FunctionType::CURVED);
    return returnVal;
 }
@@ -715,12 +720,12 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
    }
    //if (error == 0 && fuelLeft >= 0.0001) return 0;
 
-   /*// Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
+   // Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
    double totalFuelConsumed = MAX_FUEL - fuelLeft;
    double speedFactor = sqrt((MAX_FUEL - 0.0001) / (totalFuelConsumed));
    fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
    node0 = error = 0;
-   if (totalFuelConsumed >= MAX_FUEL)
+   if (totalFuelConsumed > MAX_FUEL - 0.0001)
    {
       for (int i = 0; i < pathLength; i++)
       {
@@ -729,7 +734,7 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
          double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed;
          double consumed = Kl * t, fuelConsumed = Kf * distance * speed * speed;
          fuelLeft -= fuelConsumed;
-         if (consumed > foodLeft - 0.0001 || consumed > oxygenLeft - 0.0001)
+         if (consumed > foodLeft - 0.0001 || consumed > oxygenLeft - 0.0001 || fuelLeft < 0.0001)
          {
             error = -1;
             break;
@@ -759,7 +764,7 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
          double minOxygenSpeed = distance / ((oxygenLeft - 0.0001) / Kl);
          double minFoodSpeed = distance / ((foodLeft - 0.0001) / Kl);
          double minSpeed = min(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
-         if (minSpeed > maxSpeed)
+         if (minSpeed > maxSpeed - 0.0001)
          {
             error = -1;
             break;
@@ -767,6 +772,11 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
          if (speed < minSpeed) speeds[i] = speed = minSpeed;
          double consumed = Kl * distance / speed, fuelConsumed = Kf * distance * speed * speed;
          fuelLeft -= fuelConsumed;
+         if (consumed > foodLeft - 0.0001 || consumed > oxygenLeft - 0.0001 || fuelLeft < 0.0001)
+         {
+            error = -1;
+            break;
+         }
          switch (planets[node].resupply)
          {
             case Resupply::OXYGEN:
@@ -783,12 +793,13 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
          node0 = node;
       }
    }
-   if (error == 0) return 0;*/
+   if (error == 0) return 0;
 
    // Method 3: If Method 2 (constant factor fails), optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
    fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
    double cumulativeDistance = 0;
    node0 = 0;
+   error = 0;
    for (int i = 0; i < pathLength; i++)
    {
       int node = path[i];
@@ -797,7 +808,7 @@ int optimizePath(vector<int>& path, vector<double>& speeds, vector<double>& fuel
       if (i < pathLength - 1)
       {
          int rv = optimizeSpeed(speed, nextSpeed, distance, totalDistance - cumulativeDistance, resupplyTypes[i], resupplyAfter[i], fuelLeft, oxygenLeft, foodLeft);
-         //cout << i << ", "  << distance << ", " << totalDistance-cumulativeDistance << ", " << (int) resupplyTypes[i] << ", " << (int) resupplyAfter[i] << ", " << fuelLeft << ", " << oxygenLeft << ", " << foodLeft << endl;
+         cout << i << ", "  << distance << ", " << totalDistance-cumulativeDistance << ", " << (int) resupplyTypes[i] << ", " << (int) resupplyAfter[i] << ", " << fuelLeft << ", " << oxygenLeft << ", " << foodLeft << endl;
          if (rv == -1) return -1;
          speeds[i] = speed;
       }
@@ -1136,9 +1147,9 @@ int main()
    if (oldOptimizePath(path, speeds, fuel, oxygen, food) == 0) printData(path, speeds, fuel, oxygen, food);
    else cout << "Invalid path" << endl;
 
-   // Convert microseconds to milliseconds, fix 3 decimal places
+   // Convert microseconds to seconds, fix 6 decimal places
    long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
+   cout << "Calculation time (seconds): " << calcTime / 1000000.0 << endl;
 
    cout << endl;
    while (true)

@@ -1,0 +1,5 @@
+Planet Name,x,y,type,resupply,hostile_radius
+
+Earth,0,0,neutral,,0 
+A,50,0.0,neutral,oxygen,0 
+Target,100,0,neutral,,0 
