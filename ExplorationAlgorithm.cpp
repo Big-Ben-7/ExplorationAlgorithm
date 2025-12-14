@@ -24,22 +24,20 @@ using namespace std;
 #define INF  numeric_limits<double>::infinity()
 
 // Command line option input
-static int scanSlope = 51;
-static int idealCheck = 1;
-static int nproc = 0;
-static double searchThreshold = 1.5;
-static int skipM1 = 0;
-static int skipM2 = 0;
-static int skipM3 = 0;
-static int skipSingle = 1;
-static int skipOld = 1;
-static int testMode = 0;
-static string fileName = "";
-static double kf = DEF_KF;
-static double kl = DEF_KL;
-static double maxFuel = DEF_MAX_FUEL;
-static double maxOxygen = DEF_MAX_OXYGEN;
-static double maxFood = DEF_MAX_FOOD;
+int scanSlope = 51;
+int idealCheck = 1;
+int nproc = 0;
+double searchThreshold = 1.5;
+int skipM1 = 0;
+int skipM2 = 0;
+int skipM3 = 0;
+int skipSingle = 1;
+int skipOld = 1;
+int testMode = 0;
+string fileName = "";
+double maxFuel = DEF_MAX_FUEL;
+double maxOxygen = DEF_MAX_OXYGEN;
+double maxFood = DEF_MAX_FOOD;
 
 enum Resupply
 {
@@ -146,35 +144,38 @@ struct BestSlope
   }
 };
 
-static chrono::steady_clock::time_point startTime;
-static vector<vector<double>> nodeDistances;
-static vector<PlanetData> planets;
-static int nodeCount;
-static vector<vector<pair<int, double>>> adjacencyList; // Adjacency list structure used to efficiently represent graph
-static vector<NodeData> nodes;
-static vector<TreeNode *> possiblePaths;
+chrono::steady_clock::time_point startTime;
+vector<vector<double>> nodeDistances;
+vector<double> heuristics;
+vector<PlanetData> planets;
+int nodeCount, lastNodeIndex;
+vector<vector<pair<int, double>>> adjacencyList; // Adjacency list structure used to efficiently represent graph
+vector<NodeData> nodes;
+vector<TreeNode *> possiblePaths;
 
+const double kf = DEF_KF;
+const double kl = DEF_KL;
 // Speed optimization by first derivative test
 // Cost = c(x) = time + fuel + food + oxygen = d/v + kf*d*v^2 + kl*d/v + kl*d/v
 // c'(x) = -d/v^2 + 2*kf*d*v - kl*d/v^2 - kl*d/v^2 = (-d + 2*kf*d*v^3 - kl*d - kl*d)/v^2
 // Cost minimized at c'(x) = 0 => -d + 2*kf*d*v^3 - kl*d - kl*d = 0 => v = cbrt((1 + kl+kl) / (2*kf))
-static double idealSpeed = cbrt((1 + 2 * kl) / (2 * kf));
+const double idealSpeed = cbrt((1 + 2 * kl) / (2 * kf));
 // Ideal speed disregarding consumption of one kl term (one resupply remaining in path)
-static double singleResupplySpeed = cbrt((1 + kl) / (2 * kf));
+const double singleResupplySpeed = cbrt((1 + kl) / (2 * kf));
 // Ideal speed disregarding consumption of both kl terms (both resupply types remaining)
-static double doubleResupplySpeed = 1 / cbrt(2 * kf);
-static string mapName;
+const double doubleResupplySpeed = 1 / cbrt(2 * kf);
+string mapName;
 
 string toLower(string str)
 {
-  string r = str;
-  for (int i = 0; i < str.length(); i++)
-    r[i] = tolower(str[i]);
-  return r;
+  string str2 = str;
+  for (auto &c : str2)
+    c = static_cast<unsigned char>(tolower(static_cast<unsigned char>(c)));
+  return str2;
 }
 string trim(string str)
 {
-  string r = str;
+  string str2 = str;
   int i, j, l = str.length();
   for (i = 0; i < l; i++)
   {
@@ -186,15 +187,14 @@ string trim(string str)
     if (!isspace(str[j]))
       break;
   }
-  r = r.substr(i, j - i + 1);
-  return r;
+  str2 = str2.substr(i, j - i + 1);
+  return str2;
 }
 bool isValidPlanet(string planetName)
 {
   bool alphanumeric;
-  for (int i = 0; i < planetName.length(); i++)
+  for (auto &c : planetName)
   {
-    char c = planetName[i];
     if (isalnum(c))
     {
       if (!alphanumeric)
@@ -268,13 +268,13 @@ bool edgeInHostileRadius(const int startNode, const int endNode)
   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
   double l = run * run + rise * rise; // Length of line
-  for (int i = 0; i < nodeCount; i++)
+  for (auto &planet : planets)
   {
-    if (planets[i].hostileRadius == 0)
+    if (planet.hostileRadius == 0)
       continue;
-    Point &center = planets[i].position;
+    Point &center = planet.position;
     // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-    double x3 = center.x, y3 = center.y, r = planets[i].hostileRadius, dx = x1 - x3, dy = y1 - y3;
+    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
     // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
     double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
     double discriminant = b * b - 4 * c;
@@ -477,35 +477,41 @@ int parseCSV()
     planets.emplace_back(planetName, x, y, resupplyEnum, hostileRadius);
   }
   nodeCount = lineNumber - 1;
+  lastNodeIndex = nodeCount - 1;
   iFile.close();
   return 0;
 }
 
-// Provides setup for Dijkstra pathfinding
+// Provides setup for A-star pathfinding
 void initializeLists()
 {
+  // Heuristic constant for A-star pathfinding (minimum cost per unit distance traveled)
+  double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
+  heuristics = vector<double>(nodeCount);
   // Set distance to initial node to 0
   nodes.emplace_back(0);
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
-  int n = nodeCount - 1;
-  adjacencyList = vector<vector<pair<int, double>>>(n);
+  adjacencyList = vector<vector<pair<int, double>>>(lastNodeIndex);
   for (int i = 0; i < nodeCount; i++)
   {
     if (i != 0) // Set pre-relaxed distance to all other nodes to infinity
       nodes.emplace_back(INF);
-    if (planets[i].hostileRadius != 0)
-      continue;
+    heuristics[i] = heuristic * calculateDistance(planets[i].position, planets[lastNodeIndex].position);
+    double hostileRadius = planets[i].hostileRadius;
     // Fills adjacency list with list of nodes connected to each node
     for (int j = i + 1; j < nodeCount; j++)
     {
-      // Each planet connected to all other non-hostile planets
-      if (edgeInHostileRadius(i, j))
+      // Eliminate edges crossing hostile radius
+      if (hostileRadius != 0 || edgeInHostileRadius(i, j))
+      {
+        nodeDistances[i][j] = nodeDistances[j][i] = INF;
         continue;
+      }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
       // Eliminate edges from target planet for efficiency
-      if (i != n)
+      if (i != lastNodeIndex)
         adjacencyList[i].emplace_back(j, calculateCost(i, j));
-      if (j != n)
+      if (j != lastNodeIndex)
         adjacencyList[j].emplace_back(i, calculateCost(j, i));
     }
   }
@@ -543,23 +549,24 @@ void bellmanFord()
 // Implements modified Dijkstra's algorithm to find approximate best path
 void dijkstra()
 {
-  int n = nodeCount - 1;
-  priority_queue<pair<double, int>> queue; // Priority queue of <cost, index> to pick most favorable (least cost) node
+  // Priority queue of <cost, index> to pick most promising (least cost) node
+  priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
   vector<bool> visited = vector<bool>(nodeCount);
-  queue.emplace(0, 0);
-  while (!queue.empty())
+  pq.emplace(0, 0);
+  while (!pq.empty())
   {
-    int node1Index = queue.top().second;
-    queue.pop();
+    int node1Index = pq.top().second;
+    pq.pop();
     if (visited[node1Index]) continue;
     visited[node1Index] = true;
-    if (node1Index == n) // Reached target
+    if (node1Index == lastNodeIndex) // Reached target
       return;
     
-      NodeData &node1Data = nodes[node1Index];
-    for (auto node2 : adjacencyList[node1Index]) // Iterate through adjacent nodes
+    NodeData &node1Data = nodes[node1Index];
+    for (auto &node2 : adjacencyList[node1Index]) // Iterate through adjacent nodes
     {
       int node2Index = node2.first;
+      if (visited[node2Index]) continue;
       double cost = node2.second, newCost = cost + node1Data.minCost;
       NodeData &node2Data = nodes[node2Index];
       if (newCost < node2Data.minCost)
@@ -567,7 +574,41 @@ void dijkstra()
         // Relax edge
         node2Data.minCost = newCost;
         node2Data.previousNode = node1Index;
-        queue.emplace(-newCost, node2Index);
+        pq.emplace(newCost, node2Index); // Push negative cost so that queue sorts lowest cost (least negative) at top
+      }
+    }
+  }
+}
+
+// Implements modified A-star algorithm to find approximate best-path
+void aStar()
+{
+  // Priority queue of <cost, index> to pick most promising (least cost) node
+  priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
+  vector<bool> visited = vector<bool>(nodeCount);
+  pq.emplace(0, 0);
+  while (!pq.empty())
+  {
+    int node1Index = pq.top().second;
+    pq.pop();
+    if (visited[node1Index]) continue;
+    visited[node1Index] = true;
+    if (node1Index == lastNodeIndex) // Reached target
+      return;
+    
+    NodeData &node1Data = nodes[node1Index];
+    for (auto &node2 : adjacencyList[node1Index]) // Iterate through adjacent nodes
+    {
+      int node2Index = node2.first;
+      if (visited[node2Index]) continue;
+      double cost = node2.second, newCost = cost + node1Data.minCost;
+      NodeData &node2Data = nodes[node2Index];
+      if (newCost < node2Data.minCost)
+      {
+        // Relax edge
+        node2Data.minCost = newCost;
+        node2Data.previousNode = node1Index;
+        pq.emplace(newCost + heuristics[node2Index], node2Index); // Push negative cost so that queue sorts lowest cost (least negative) at top
       }
     }
   }
@@ -584,7 +625,7 @@ void findPathTree(TreeNode *head, double minCost, double maxCost)
   vector<TreeNode *> &children = head->children;
   for (int i = 0; i < nodeCount; i++)
   {
-    if (i == head->nodeIndex || 1 + nodeDistances[head->nodeIndex][i] == 1)
+    if (i == head->nodeIndex || nodeDistances[head->nodeIndex][i] == INF)
       continue;
     TreeNode *p = head->parent;
     bool skip = false;
@@ -614,11 +655,10 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
   double outerIntersection = 1 / sqrt(1 + m * m);
   double innerIntersection = 0.0;
   double xi, x1, y1;
-  int i;
-  for (i = 0; i < bs.size(); i++)
+  for (auto &boundary : bs)
   {
-    x1 = bs[i].xb;
-    y1 = bs[i].yb;
+    x1 = boundary.xb;
+    y1 = boundary.yb;
     if (1 + x1 == 1)
     {
       xi = y1 / m;
@@ -1301,10 +1341,10 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     switch (planet.resupply)
     {
       case OXYGEN:
-        o2 = to_string((int) maxOxygen);
+        o2 = "->  " + to_string((int) maxOxygen);
         break;
       case FOOD:
-        fo2 = to_string((int) maxFood);
+        fo2 = "->  " + to_string((int) maxFood);
         break;
       default:
         break;
@@ -1500,7 +1540,7 @@ void oldTestPath()
 // Searches list of best paths to find final optimal solution
 int searchBestPaths(double minCost, double maxCost)
 {
-    TreeNode head = TreeNode(nodeCount - 1, NULL, 0.0);
+    TreeNode head = TreeNode(lastNodeIndex, NULL, 0.0);
     findPathTree(&head, minCost, maxCost);
     int pathCount = possiblePaths.size(), validCount = 0;
     BestPath bestPath;
@@ -1567,8 +1607,6 @@ int main(int argc, char *argv[])
     {"fuel", required_argument, 0, 'f'},
     {"oxygen", required_argument, 0, 'o'},
     {"food", required_argument, 0, 'd'},
-    {"kf", required_argument, 0, 'a'},
-    {"kl", required_argument, 0, 'b'},
     {"search", required_argument, 0, 's'}, // Search list of best paths for speed optimization
     {"test", required_argument, 0, 't'}, // Test path
     {"scank", required_argument, 0, 'k'}, // Scan for best slope during speed optimization
@@ -1581,7 +1619,7 @@ int main(int argc, char *argv[])
     {"skipOld", required_argument, 0, 'l'}, // Skip old optimization methods
     {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:f:o:d:a:b:s:t:k:e:n:r:p:q:w:l", long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:f:o:d:s:t:k:e:n:r:p:q:w:l", long_options, &index)) != -1)
   {
     switch (opt)
     {
@@ -1596,12 +1634,6 @@ int main(int argc, char *argv[])
         break;
       case 'd':
         maxFood = atof(optarg);
-        break;
-      case 'a':
-        kf = atof(optarg);
-        break;
-      case 'b':
-        kl = atof(optarg);
         break;
       case 's':
         searchThreshold = atof(optarg);
@@ -1656,7 +1688,7 @@ int main(int argc, char *argv[])
   //cout << endl << "Parallel processors: inputted " << nproc << ", using " << np << endl;
 #endif
 
-  // Map input
+  // Input and setup
   int error;
   do
   {
@@ -1664,16 +1696,23 @@ int main(int argc, char *argv[])
     error = parseCSV();
     fileName = "";
   } while (error != 0);
-  initializeLists(); // Setup
-  dijkstra(); // Pathfinding algorithm
-  vector<int> path; // Reconstructs path found by Dijkstra
+  initializeLists();
+
+  // Pathfinding
+  /*tartTime = chrono::steady_clock::now();
+  for (int i = 0; i < 1000000; i++) aStar();
+  long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
+  cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
+  aStar();
+  vector<int> path; 
   NodeData node = nodes.back();
-  path.push_back(nodeCount - 1);
+  path.push_back(lastNodeIndex);
   while (true)
   {
+    // Reconstructs path found by A-star
     int previousNode = node.previousNode;
     cout << previousNode << endl;
-    if (previousNode == -1) break;
+    if (previousNode == 0) break;
     path.push_back(previousNode);
     node = nodes[previousNode];
   }
