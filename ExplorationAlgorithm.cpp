@@ -322,7 +322,7 @@ int parseCSV()
   if (fileName.empty())
   {
     cout << endl;
-    cout << "Map file name: ";
+    cout << "Input map file: ";
     getline(cin, fileName);
   }
   ifstream iFile;
@@ -488,15 +488,15 @@ void initializeLists()
   // Heuristic constant for A-star pathfinding (minimum cost per unit distance traveled)
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
   heuristics = vector<double>(nodeCount);
+  Point lastPlanetPos = planets[lastNodeIndex].position;
   // Set distance to initial node to 0
   nodes.emplace_back(0);
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
-  adjacencyList = vector<vector<pair<int, double>>>(lastNodeIndex);
+  adjacencyList = vector<vector<pair<int, double>>>(nodeCount);
   for (int i = 0; i < nodeCount; i++)
   {
     if (i != 0) // Set pre-relaxed distance to all other nodes to infinity
       nodes.emplace_back(INF);
-    heuristics[i] = heuristic * calculateDistance(planets[i].position, planets[lastNodeIndex].position);
     double hostileRadius = planets[i].hostileRadius;
     // Fills adjacency list with list of nodes connected to each node
     for (int j = i + 1; j < nodeCount; j++)
@@ -505,15 +505,16 @@ void initializeLists()
       if (hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
         nodeDistances[i][j] = nodeDistances[j][i] = INF;
+        if (j == lastNodeIndex)
+          heuristics[i] = heuristic * calculateDistance(planets[i].position, lastPlanetPos);
         continue;
       }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
-      // Eliminate edges from target planet for efficiency
-      if (i != lastNodeIndex)
-        adjacencyList[i].emplace_back(j, calculateCost(i, j));
-      if (j != lastNodeIndex)
-        adjacencyList[j].emplace_back(i, calculateCost(j, i));
-    }
+      adjacencyList[i].emplace_back(j, calculateCost(i, j));
+      adjacencyList[j].emplace_back(i, calculateCost(j, i));
+      if (j == lastNodeIndex)
+        heuristics[i] = heuristic * distance;
+    }    
   }
 }
 
@@ -546,7 +547,7 @@ void bellmanFord()
   }
 }*/
 
-// Implements modified Dijkstra's algorithm to find approximate best path
+/*// Implements modified Dijkstra's algorithm to find approximate best path
 void dijkstra()
 {
   // Priority queue of <cost, index> to pick most promising (least cost) node
@@ -578,7 +579,7 @@ void dijkstra()
       }
     }
   }
-}
+}*/
 
 // Implements modified A-star algorithm to find approximate best-path
 void aStar()
@@ -617,21 +618,23 @@ void aStar()
 // Determines list of best paths by finding paths that have a cost close to approximate best path but 
 void findPathTree(TreeNode *head, double minCost, double maxCost)
 {
+  static int id = 0;
+  id++;
   if (head->nodeIndex == 0)
   {
     if (head->cost >= minCost) possiblePaths.push_back(head);
     return;
   }
   vector<TreeNode *> &children = head->children;
-  for (int i = 0; i < nodeCount; i++)
+  for (auto &node : adjacencyList[head->nodeIndex])
   {
-    if (i == head->nodeIndex || nodeDistances[head->nodeIndex][i] == INF)
-      continue;
+    int index = node.first;
+    cout << id << ", " << head->nodeIndex << ", " << index << ", " << maxCost << endl;
     TreeNode *p = head->parent;
     bool skip = false;
     while (p)
     {
-      if (i == p->nodeIndex)
+      if (index == p->nodeIndex)
       {
         skip = true;
         break;
@@ -640,10 +643,11 @@ void findPathTree(TreeNode *head, double minCost, double maxCost)
     }
     if (skip)
       continue;
-    double cost = calculateCost(i, head->nodeIndex) + head->cost;
+    double cost = node.second + head->cost;
+    cout << id << ", " << head->nodeIndex << ", " << index << ", " << head->cost << ", " << cost << endl;
     if (cost >= maxCost)
       continue;
-    children.push_back(new TreeNode(i, head, cost));
+    children.push_back(new TreeNode(index, head, cost));
     findPathTree(children.back(), minCost, maxCost);
   }
 }
@@ -1314,13 +1318,19 @@ int oldOptimizePath(vector<int> &path, vector<double> &speeds, vector<double> &f
 void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   int pathLength = path.size();
+  for (int i = 0; i < 135; i++)
+    cout << "-";
+  cout << endl << endl;
   cout << "Name of map used: " << mapName << endl;
+  string startPlanet = planets[0].name;
+  cout << "Computing route from " << startPlanet << " to " << planets[lastNodeIndex].name + "..." << endl;
   if (pathLength == 0)
   {
-    cout << "invalid path" << endl;
+    cout << "Mission failed: Valid path could not be found. Please try again." << endl;
     return;
   }
-  cout << "Planet travel order: " << endl;
+  cout << endl;
+  cout << "Planet travel order (excluding " << startPlanet << "): " << endl;
   cout << endl;
   cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
   cout << scientific << setprecision(5);
@@ -1341,10 +1351,10 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     switch (planet.resupply)
     {
       case OXYGEN:
-        o2 = "->  " + to_string((int) maxOxygen);
+        o2 = "-->  " + to_string((int) maxOxygen);
         break;
       case FOOD:
-        fo2 = "->  " + to_string((int) maxFood);
+        fo2 = "-->  " + to_string((int) maxFood);
         break;
       default:
         break;
@@ -1358,10 +1368,10 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
          << setw(11) << d << "   "
          << setw(11) << travelTime << "   "
          << setw(11) << fu << "   "
-         << setw(11) << o << "   "
-         << setw(8) << o2 << "   "
-         << setw(11) << fo << "   "
-         << setw(8) << fo2 << "   "
+         << setw(11) << o << "  "
+         << setw(9) << o2 << "   "
+         << setw(11) << fo << "  "
+         << setw(9) << fo2 << "   "
          << setw(12) << s
          << endl;
     node0 = node;
@@ -1541,7 +1551,9 @@ void oldTestPath()
 int searchBestPaths(double minCost, double maxCost)
 {
     TreeNode head = TreeNode(lastNodeIndex, NULL, 0.0);
+    cout << "Before tree" << endl;
     findPathTree(&head, minCost, maxCost);
+    cout << "After tree" << endl;
     int pathCount = possiblePaths.size(), validCount = 0;
     BestPath bestPath;
     // Indicate to compiler to use parallel processors for search
@@ -1674,9 +1686,12 @@ int main(int argc, char *argv[])
   cout << "Welcome Mission Control!" << endl;
   if (fileName.empty())
   {
-    cout << endl;
     cout << "Use these instructions to begin stress-testing:" << endl;
-    cout << "Put the map CSV file in the same directory/folder as this program and then simply input the file name below (e.g., ExampleMap.csv)." << endl;
+    cout << endl;
+    cout << "This program expects a map CSV file formatted as per the challenge guide (Planet Name,x,y,type,resupply,hostile_radius)." << endl;
+    cout << "It will output the best route from the first planet in the file (right after the header line) to the planet on the last line of the file." << endl;
+    cout << endl;
+    cout << "Put the CSV file in the same directory/folder as this program and then simply input the file name below (e.g., ExampleMap.csv)." << endl;
     cout << "If the map cannot be placed in the same folder, the full file path can be provided:" << endl;
     cout << "e.g., C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
   }
@@ -1712,12 +1727,17 @@ int main(int argc, char *argv[])
     // Reconstructs path found by A-star
     int previousNode = node.previousNode;
     cout << previousNode << endl;
-    if (previousNode == 0) break;
+    if (previousNode <= 0) break;
     path.push_back(previousNode);
     node = nodes[previousNode];
   }
-  reverse(path.begin(), path.end());
   int pathLength = path.size();
+  if (pathLength == 0)
+  {
+    cout << "Mission failed: Valid path could not be found. Please try again." << endl;
+    return -1;
+  }
+  reverse(path.begin(), path.end());
 
   long long calcTime;
   if (pathLength > 0)
@@ -1764,6 +1784,7 @@ int main(int argc, char *argv[])
     // If not, iterate through increasing cost intervals until valid best path is found
     while (true)
     {
+      cout << "iteration" << endl;
       try
       {
         if (searchBestPaths(minCost, maxCost) == 0)
@@ -1771,15 +1792,17 @@ int main(int argc, char *argv[])
         minCost = maxCost;
         maxCost *= 2;
       }
-      catch(...)
+      catch (...)
       {
         // If error is thrown (eg. maxCost outside double limit) before valid path is found, the map is invalid
-        cout << "Mission failed: Valid path could not be found. Please try again";
+        cout << "Mission failed: Valid path could not be found. Please try again." << endl;
+        return -1;
       }
     }
     cout << endl;
     calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
     cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
+    cout << endl;
   }
 
   while (testMode > 0)
