@@ -7,8 +7,8 @@ D,350,-50,neutral,oxygen,0
 E,450,100,neutral,food,0 
 F,550,150,neutral,,0 
 G,650,-50,neutral,food,0 
-H,300,-50,hostile,,100
-I,600,150,hostile,,100
+H,300,50,hostile,,100
+I,800,90,hostile,,100
 J,700,100,neutral,food,0 
 K,800,0,neutral,oxygen,0 
 L,900,50,neutral,,0 

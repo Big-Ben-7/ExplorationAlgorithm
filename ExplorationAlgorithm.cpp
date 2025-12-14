@@ -483,11 +483,8 @@ void initializeLists()
   adjacencyList = vector<vector<pair<int, double>>>(n);
   for (int i = 0; i < nodeCount; i++)
   {
-    if (i != 0)
-    {
-      // Set pre-relaxed distance to all other nodes to infinity
+    if (i != 0) // Set pre-relaxed distance to all other nodes to infinity
       nodes.emplace_back(INF);
-    }
     if (planets[i].hostileRadius != 0)
       continue;
     // Fill edge list with edges for each pair of connected nodes
@@ -545,7 +542,7 @@ void bellmanFord()
 // Implements modified Dijkstra's algorithm to find approximate best path
 void dijkstra()
 {
-  priority_queue<pair<double, int>> queue; // Priority queue of cost, index to pick most favorable node
+  priority_queue<pair<double, int>> queue; // Priority queue of <cost, index> to pick most favorable (least cost) node
   vector<bool> processed = vector<bool>(nodeCount);
   queue.emplace(0, 0);
   while (!queue.empty())
@@ -556,8 +553,9 @@ void dijkstra()
     processed[node1] = true;
     NodeData &node1Data = nodes[node1];
     int n = nodeCount - 1;
-    if (node1 == 13)
+    if (node1 == 13) // Reached target
       return;
+    
     for (auto node2 : adjacencyList[node1])
     {
       int index = node2.first;
