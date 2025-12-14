@@ -3,12 +3,11 @@
 	"tasks": [
 		{
 			"type": "cppbuild",
-			"label": "C/C++: clang++ build active file",
-			"command": "/usr/bin/clang++",
+			"label": "C/C++: g++ build active file",
+			"command": "/opt/local/bin/g++-mp-13",
 			"args": [
-				"-fcolor-diagnostics",
-				"-fansi-escape-codes",
-				"-g",
+				"-fopenmp",
+				"-O3",
 				"${file}",
 				"-o",
 				"${fileDirname}/${fileBasenameNoExtension}"
@@ -19,11 +18,8 @@
 			"problemMatcher": [
 				"$gcc"
 			],
-			"group": {
-				"kind": "build",
-				"isDefault": true
-			},
-			"detail": "compiler: /usr/bin/clang++"
+			"group": "build",
+			"detail": "compiler: /usr/bin/g++"
 		}
 	]
 }

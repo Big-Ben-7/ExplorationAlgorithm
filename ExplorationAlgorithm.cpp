@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <fstream>
 #include <vector>
+#include <queue>
 #include <string>
 #include <algorithm>
 #include <chrono>
@@ -28,7 +29,7 @@ static int idealCheck = 1;
 static int nproc = 0;
 static double searchThreshold = 1.5;
 static int skipM1 = 0;
-static int skipM2 = 0;
+static int skipM2 = 1;
 static int skipM3 = 0;
 static int skipSingle = 1;
 static int skipOld = 1;
@@ -40,7 +41,6 @@ static double maxFuel = DEF_MAX_FUEL;
 static double maxOxygen = DEF_MAX_OXYGEN;
 static double maxFood = DEF_MAX_FOOD;
 
-// Use enum instead of string for resupply to improve performance
 enum Resupply
 {
   NONE,
@@ -80,8 +80,7 @@ struct PlanetData
     name = n, position = Point(x, y), resupply = r, hostileRadius = h;
   }
 };
-// Edges defined by starting node/vertex (planet), ending node, and distance
-struct Edge
+/*struct Edge
 {
   int node1, node2;
   double distance;
@@ -97,8 +96,7 @@ struct Edge
     else
       return node1 < other1;
   }
-};
-// Stores cost and travel order for best path to node
+};*/
 struct NodeData
 {
   double minCost;
@@ -109,7 +107,7 @@ struct NodeData
     bestPath = vector<int>();
   }
 };
-// Represents one node in node tree
+// Represents one node in a node tree
 struct TreeNode
 {
   int nodeIndex;
@@ -123,7 +121,6 @@ struct TreeNode
     cost = c;
   }
 };
-// Stores path, resource consumption, score associated with a path
 struct BestPath
 {
   int index;
@@ -153,7 +150,8 @@ static chrono::steady_clock::time_point startTime;
 static vector<vector<double>> nodeDistances;
 static vector<PlanetData> planets;
 static int nodeCount;
-static vector<Edge> edgeList; // Edge list used to efficiently represent graph
+// Adjacency list used to efficiently represent graph - list of connected nodes and costs for each node
+static vector<vector<pair<int, double>>> adjacencyList;
 static vector<NodeData> nodes;
 static vector<TreeNode *> possiblePaths;
 
@@ -228,7 +226,7 @@ double calculateDistance(const Point pos1, const Point pos2)
   return sqrt(dx * dx + dy * dy);
 }
 
-// Bisection algorithm to determine roots of function
+// Bisection algorithm to determine roots of a function (used in speed optimization)
 double bisection(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double c;
@@ -258,12 +256,12 @@ double bisection(double a, double b, const double x0, const double y0, double (*
 
 bool edgeInHostileRadius(const int startNode, const int endNode)
 {
-  // Calculate intersection of line through (x1,y1) and (y1,y2) with circle at (x3,y3) and radius r
+  // Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
   Point &start = planets[startNode].position, end = planets[endNode].position;
-  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d=distance along line and theta = atan(slope)
+  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
-  double l = run * run + rise * rise;                                            // Length of line
+  double l = run * run + rise * rise; // Length of line
   for (int i = 0; i < nodeCount; i++)
   {
     if (planets[i].hostileRadius == 0)
@@ -286,6 +284,7 @@ bool edgeInHostileRadius(const int startNode, const int endNode)
   return false;
 }
 
+// Returns cost (time + resource consumption) of edge connecting two nodes
 double calculateCost(int node1, int node2)
 {
   double d = nodeDistances[node1][node2];
@@ -311,44 +310,11 @@ double calculateCost(int node1, int node2)
   return t + fuelConsumed + oxygenConsumed + foodConsumed;
 }
 
-// Determine list of best paths by finding paths that are close to approximate best path
-void findPathTree(TreeNode *head, double maxCost)
-{
-  if (head->nodeIndex == 0)
-  {
-    possiblePaths.push_back(head);
-    return;
-  }
-  vector<TreeNode *> &children = head->children;
-  for (int i = 0; i < nodeCount; i++)
-  {
-    if (i == head->nodeIndex || 1 + nodeDistances[head->nodeIndex][i] == 1)
-      continue;
-    TreeNode *p = head->parent;
-    bool skip = false;
-    while (p)
-    {
-      if (i == p->nodeIndex)
-      {
-        skip = true;
-        break;
-      }
-      p = p->parent;
-    }
-    if (skip)
-      continue;
-    double cost = calculateCost(i, head->nodeIndex) + head->cost;
-    if (cost > maxCost)
-      continue;
-    children.push_back(new TreeNode(i, head, cost));
-    findPathTree(children.back(), maxCost);
-  }
-}
-
 int parseCSV()
 {
   if (fileName.empty())
   {
+    cout << endl;
     cout << "Map file name: ";
     getline(cin, fileName);
   }
@@ -358,7 +324,7 @@ int parseCSV()
   iFile.open(fileName);
   if (!iFile.is_open())
   {
-    cout << "Error: file not found. Please make sure that the entered name is correct and that the CSV file is in the same folder as this project." << endl;
+    cout << "Error: file \"" << fileName << "\" not found. Please make sure that the entered name is correct and that the CSV file is in the same folder as this project." << endl;
     return -1;
   }
 
@@ -421,7 +387,7 @@ int parseCSV()
     planetName = trim(line.substr(0, commaIndex));
     if (planetName.empty() || !isValidPlanet(planetName))
     {
-      cout << "Error: \"" << planetName << "\" (line " << lineNumber << ") is an invalid planet name. Planet names must be alphanumeric (spaces, dashes, and parenthesis accepted)." << endl;
+      cout << "Error: \"" << planetName << "\" (entry" << lineNumber << ") is an invalid planet name. Planet names must be alphanumeric (spaces, dashes, and parenthesis accepted)." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -435,7 +401,7 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The x-coordinate \"" << substring << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The x-coordinate (\"" << substring << "\") of planet \"" << planetName << "\" (entry" << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -449,7 +415,7 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The y-coordinate \"" << substring << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The y-coordinate (\"" << substring << "\") of planet \"" << planetName << "\" (entry" << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -459,7 +425,7 @@ int parseCSV()
     type = trim(toLower(line.substr(0, commaIndex)));
     if (type != "neutral" && type != "hostile")
     {
-      cout << "Error: The type \"" << type << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be \"neutral\" or \"hostile\"." << endl;
+      cout << "Error: The type (\"" << type << "\") of planet \"" << planetName << "\" (entry" << lineNumber << ") must be \"neutral\" or \"hostile\"." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -476,7 +442,7 @@ int parseCSV()
       resupplyEnum = NONE;
     else
     {
-      cout << "Error: The resupply \"" << resupply << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be \"\" (none), \"food\", or \"oxygen\"." << endl;
+      cout << "Error: The resupply (\"" << resupply << "\") of planet \"" << planetName << "\" (entry" << lineNumber << ") must be \"\" (none), \"food\", or \"oxygen\"." << endl;
       return -1;
     }
     line = trim(line.substr(commaIndex + 1));
@@ -488,17 +454,17 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The hostile radius \"" << line << "\" of planet \"" << planetName << "\" (line " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The hostile radius (\"" << line << "\") of planet \"" << planetName << "\" (entry" << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     if (type == "neutral" && hostileRadius != 0)
     {
-      cout << "Error: The hostile radius \"" << hostileRadius << "\" of neutral planet \"" << planetName << "\" (line " << lineNumber << ") must be 0." << endl;
+      cout << "Error: The hostile radius (" << hostileRadius << ") of neutral planet \"" << planetName << "\" (entry" << lineNumber << ") must be 0." << endl;
       return -1;
     }
     else if (type == "hostile" && hostileRadius <= 0)
     {
-      cout << "Error: The hostile radius \"" << hostileRadius << "\" of hostile planet \"" << planetName << "\" (line " << lineNumber << ") must be positive." << endl;
+      cout << "Error: The hostile radius (" << hostileRadius << ") of hostile planet \"" << planetName << "\" (entry" << lineNumber << ") must be positive." << endl;
       return -1;
     }
     planets.emplace_back(planetName, x, y, resupplyEnum, hostileRadius);
@@ -513,6 +479,8 @@ void initializeLists()
   // Set distance to initial node to 0
   nodes.emplace_back(0);
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
+  int n = nodeCount - 1;
+  adjacencyList = vector<vector<pair<int, double>>>(n);
   for (int i = 0; i < nodeCount; i++)
   {
     if (i != 0)
@@ -527,23 +495,26 @@ void initializeLists()
     {
       // Each planet connected to all other non-hostile planets
       if (edgeInHostileRadius(i, j))
-      {
-        //nodeDistances[i][j] = nodeDistances[j][i] = INF;
         continue;
-      }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
       // Eliminate edges from target planet for efficiency
-      if (i != nodeCount - 1)
-        edgeList.emplace_back(i, j, distance);
-      if (j != nodeCount - 1)
-        edgeList.emplace_back(j, i, distance);
+      if (i != n)
+      {
+        //edgeList.emplace_back(i, j, distance);
+        adjacencyList[i].emplace_back(j, calculateCost(i, j));
+      }
+      if (j != n)
+      {
+        //edgeList.emplace_back(j, i, distance);
+        adjacencyList[j].emplace_back(i, calculateCost(j, i));
+      }
     }
   }
-  sort(edgeList.begin(), edgeList.end());
+  //sort(edgeList.begin(), edgeList.end());
 }
 
-// Implement modified Bellman-Ford algorithm to find approximate best path
-void calculatePath()
+/*// Implements modified Bellman-Ford algorithm to find approximate best path
+void bellmanFord()
 {
   int edgeCount = edgeList.size();
   bool unrelaxed = true;
@@ -569,6 +540,73 @@ void calculatePath()
       }
     }
   }
+}*/
+
+// Implements modified Dijkstra's algorithm to find approximate best path
+void dijkstra()
+{
+  priority_queue<pair<double, int>> queue; // Priority queue of cost, index to pick most favorable node
+  vector<bool> processed = vector<bool>(nodeCount);
+  queue.emplace(0, 0);
+  while (!queue.empty())
+  {
+    int node1 = queue.top().second;
+    queue.pop();
+    if (processed[node1]) continue;
+    processed[node1] = true;
+    NodeData &node1Data = nodes[node1];
+    int n = nodeCount - 1;
+    if (node1 == 13)
+      return;
+    for (auto node2 : adjacencyList[node1])
+    {
+      int index = node2.first;
+      double cost = node2.second, newCost = cost + node1Data.minCost;
+      NodeData &node2Data = nodes[index];
+      if (newCost < node2Data.minCost)
+      {
+        // Relax edge
+        node2Data.minCost = newCost;
+        node2Data.bestPath = node1Data.bestPath;
+        node2Data.bestPath.push_back(index);
+        queue.emplace(-newCost, index);
+      }
+    }
+  }
+}
+
+// Determines list of best paths by finding paths that are close to approximate best path
+void findPathTree(TreeNode *head, double maxCost)
+{
+  if (head->nodeIndex == 0)
+  {
+    possiblePaths.push_back(head);
+    return;
+  }
+  vector<TreeNode *> &children = head->children;
+  for (int i = 0; i < nodeCount; i++)
+  {
+    if (i == head->nodeIndex || 1 + nodeDistances[head->nodeIndex][i] == 1)
+      continue;
+    TreeNode *p = head->parent;
+    bool skip = false;
+    while (p)
+    {
+      if (i == p->nodeIndex)
+      {
+        skip = true;
+        break;
+      }
+      p = p->parent;
+    }
+    if (skip)
+      continue;
+    double cost = calculateCost(i, head->nodeIndex) + head->cost;
+    if (cost > maxCost)
+      continue;
+    children.push_back(new TreeNode(i, head, cost));
+    findPathTree(children.back(), maxCost);
+  }
 }
 
 double derivFunc(const double theta, const double x0, const double y0)
@@ -583,7 +621,6 @@ double func(const double theta, const double x0, const double y0)
   return x0 * sinTheta + y0 * cosTheta - sinTheta * cosTheta;
 }
 
-// b = b1 + b2/m; c = c1 + c2*m*m;
 int getIdealSpeed(double &v1, double &v2, double &score, const double m,
                   const double b, const double c, vector<Boundary> &bs)
 {
@@ -792,7 +829,7 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
       ss[i] = INF;
     }
 #pragma omp declare reduction(min_slope:BestSlope : omp_out = (omp_in.score < omp_out.score) ? omp_in : omp_out) \
-    initializer(omp_priv = BestSlope())
+        initializer(omp_priv = BestSlope())
 #pragma omp parallel for reduction(min_slope : bestSlope) default(shared) private(i, s, b, c, returnVal)
     for (i = 0; i < scanSlope; i++)
     {
@@ -870,7 +907,7 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
   return returnVal;
 }
 
-// Optimize resource usage on path with 3 methods (which increase in both robustness and computation time)
+// Optimizes resource usage on path with 3 methods (which increase in both robustness and computation time)
 int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   int error = 0;
@@ -1074,7 +1111,7 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
       return 0;
   }
   
-  // Method 3: If Method 2 (constant factor fails), optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
+  // Method 3: If Method 2 (constant factor) fails, optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
   if (skipM3 == 0)
   {
     fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
@@ -1257,8 +1294,8 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
   }
   cout << "Planet travel order: " << endl;
   cout << endl;
-  cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(14) << "Food" << setw(15) << "Score" << endl;
-  cout << fixed;
+  cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(14) << "After Resup" << setw(14) << "Food" << setw(14) << "After Resup" << setw(15) << "Score" << endl;
+  cout << scientific << setprecision(5);
   int node0 = 0;
   double travelTime = 0.0;
   double travelDistance = 0.0;
@@ -1271,31 +1308,33 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     //ucost += calculateCost(node0, node);
     travelTime += t;
     travelDistance += d;
-    double fu = fuel[i], o = oxygen[i], fo = food[i], s = travelTime - (fu + o + fo);
+    double fu = fuel[i], o = oxygen[i], fo = food[i], s = travelTime - (fu + o + fo), o2 = o, fo2 = fo;
+    switch (planet.resupply)
+    {
+      case OXYGEN:
+        o2 = maxOxygen;
+        break;
+      case FOOD:
+        fo2 = maxFood;
+        break;
+      default:
+        break;
+    }
     if (edgeInHostileRadius(node0, node))
       cout << "Edge crosses hostile radius" << endl;
     cout << i + 1 << ") "
          << right
          << setw(11) << planet.name << "   "
-         << setw(11) << setprecision(9) << v << "   "
-         << setw(11) << setprecision(6) << d << "   "
+         << setw(11) << v << "   "
+         << setw(11) << d << "   "
          << setw(11) << travelTime << "   "
          << setw(11) << fu << "   "
          << setw(11) << o << "   "
+         << setw(11) << o2 << "   "
          << setw(11) << fo << "   "
+         << setw(11) << fo2 << "   "
          << setw(12) << s
          << endl;
-    switch (planet.resupply)
-    {
-      case OXYGEN:
-        cout << "   *Oxygen resupplied to " << maxOxygen << endl;
-        break;
-      case FOOD:
-        cout << "   *Food resupplied to " << maxFood << endl;
-        break;
-      default:
-        break;
-    }
     node0 = node;
   }
   cout << endl;
@@ -1448,10 +1487,10 @@ void oldTestPath()
     switch (planet.resupply)
     {
       case OXYGEN:
-        cout << "   *Oxygen resupplied to " << maxOxygen << endl;
+        cout << right << setw(73) << "(" << (int) maxOxygen << "-Resupp)" << endl;
         break;
       case FOOD:
-        cout << "   *Food resupplied to " << maxFood << endl;
+        cout << right << setw(87) << "(" << (int) maxFood << "-Resupp)" << endl;
         break;
       default:
         break;
@@ -1560,22 +1599,24 @@ int main(int argc, char *argv[])
     cout << "If the map cannot be placed in the same folder, the full file path can be provided:" << endl;
     cout << "e.g., C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
   }
-  cout << endl;
 
 #ifdef _OPENMP
   if (nproc > 0) 
     omp_set_num_threads(nproc);
   int np = omp_get_num_threads();
-  cout << endl << "Parallel processors: inputted " << nproc << ", using " << np << endl;
+  //cout << endl << "Parallel processors: inputted " << nproc << ", using " << np << endl;
 #endif
 
-  if (parseCSV() < 0)
+  /*int error;
+  do
   {
-    cout << "Error occurred parsing csv file: " << fileName << endl;
-    return -1;
-  }
+    cout << endl;
+    error = parseCSV();
+    fileName = "";
+  } while (error != 0);*/
+  if (parseCSV() < 0) return -1;
   initializeLists();
-  calculatePath();
+  dijkstra();
   vector<int> &path = nodes.back().bestPath;
   int pathLength = path.size();
 
@@ -1623,7 +1664,8 @@ int main(int argc, char *argv[])
     int pathCount = possiblePaths.size(), validCount = 0;
     BestPath bestPath;
     // Indicate to compiler to use parallel processors
-#pragma omp declare reduction(min_idx:BestPath : omp_out = (omp_in.score < omp_out.score) ? omp_in : omp_out) initialize (omp_priv = BestPath())
+#pragma omp declare reduction(min_idx:BestPath : omp_out = (omp_in.score < omp_out.score) ? omp_in : omp_out) \
+        initializer(omp_priv = BestPath())
 #pragma omp parallel for reduction(min_idx : bestPath) reduction(+ : validCount)
     
     for (int i = 0; i < pathCount; i++)
@@ -1670,6 +1712,7 @@ int main(int argc, char *argv[])
       //cout << "found " << validCount << " valid out of " << pathCount << " paths, best is path: " << bestPath.index << endl;
       printData(bestPath.path, bestPath.speeds, bestPath.fuel, bestPath.oxygen, bestPath.food);
     }
+    else cout << "Mission failed: Valid path could not be found. Please try another map." << endl;
     cout << endl;
     calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
     cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;

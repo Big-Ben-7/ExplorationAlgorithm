@@ -1,5 +1,4 @@
 Planet Name,x,y,type,resupply,hostile_radius
-
 Earth,0,0,neutral,,0 
 A,100,20,neutral,oxygen,0 
 B,200,50,neutral,food,0 
