@@ -10,6 +10,7 @@
 #include <limits>
 #include <getopt.h>
 #include <array>
+#include <set>
 #ifdef _OPENMP
 #include <pthread.h>
 #include <omp.h>
@@ -22,12 +23,14 @@ using namespace std;
 #define DEF_MAX_OXYGEN  2000
 #define DEF_MAX_FOOD  2000
 #define INF  numeric_limits<double>::infinity()
+#define EPSILON  std::numeric_limits<double>::epsilon()
 
 // Command line option input
 int scanSlope = 51;
 int idealCheck = 1;
 int nproc = 0;
-int maxPaths = 100;
+int maxPaths = 5;
+int useOldYens = 0;
 int skipM1 = 0;
 int skipM2 = 0;
 int skipM3 = 0;
@@ -95,7 +98,7 @@ struct PlanetData
       return node1 < other1;
   }
 };*/
-struct GraphNode
+/*struct GraphNode
 {
   int nodeIndex;
   double cost;
@@ -104,11 +107,11 @@ struct GraphNode
     nodeIndex = n;
     cost = c;
   }
-  /*bool operator<(const ConnectedNode &other) const
+  bool operator<(const ConnectedNode &other) const
   {
     return nodeIndex < other.nodeIndex;
-  }*/
-};
+  }
+};*/
 struct NodeData
 {
   double minCost;
@@ -143,6 +146,23 @@ struct BestSlope
   {
     index = -1;
     score = INF;
+  }
+};
+struct Path
+{
+  vector<int> path;
+  double cost;
+  Path(vector<int> p, double c)
+  {
+    path = p;
+    cost = c;
+  }
+  bool operator<(const Path& other) const {
+    if (fabs(cost - other.cost) < 10*EPSILON)
+    {
+      return path < other.path; // Allow different paths with same cost
+    }
+    return cost < other.cost; // Sort by cost in Yen's algorithm set
   }
 };
 
@@ -207,7 +227,7 @@ bool isValidPlanet(string planetName)
     }
     switch (c)
     {
-      // Spaces, dashes, and parenthesis allowed
+      // Spaces, dashes, and parentheses allowed
       case ' ':
       case '-':
       case '(':
@@ -224,6 +244,60 @@ double calculateDistance(const Point pos1, const Point pos2)
 {
   double dx = pos2.x - pos1.x, dy = pos2.y - pos1.y;
   return sqrt(dx * dx + dy * dy);
+}
+bool edgeInHostileRadius(const int startNode, const int endNode)
+{
+  // Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
+  Point &start = planets[startNode].position, end = planets[endNode].position;
+  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
+  double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
+  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
+  double l = run * run + rise * rise; // Length of line
+  for (auto &planet : planets)
+  {
+    if (planet.hostileRadius == 0)
+      continue;
+    Point &center = planet.position;
+    // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
+    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
+    // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
+    double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
+    double discriminant = b * b - 4 * c;
+    // If discriminant < 0, no solution and edge does not cross hostile circle
+    if (discriminant < 0)
+      continue;
+    double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2; // Roots from quadratic formula
+    // If both values for d are lower or higher than edge length, hostile circle is still not crossed
+    if ((d1 < 0 && d2 < 0) || (d1 * d1 > l && d2 * d2 > l))
+      continue;
+    return true;
+  }
+  return false;
+}
+// Returns cost (time + resource consumption) of edge connecting two nodes
+double calculateCost(int node1, int node2)
+{
+  double d = nodeDistances[node1][node2];
+  double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
+  switch (planets[node2].resupply)
+  {
+    case OXYGEN:
+      speed = singleResupplySpeed, t = d / speed;
+      oxygenConsumed = 0;
+      foodConsumed = kl * t;
+      break;
+    case FOOD:
+      speed = singleResupplySpeed, t = d / speed;
+      foodConsumed = 0;
+      oxygenConsumed = kl * t;
+      break;
+    default:
+      speed = idealSpeed, t = d / speed;
+      oxygenConsumed = foodConsumed = kl * t;
+      break;
+  }
+  fuelConsumed = kf * d * speed * speed;
+  return t + fuelConsumed + oxygenConsumed + foodConsumed;
 }
 
 // Bisection algorithm to determine roots of a function (used in speed optimization)
@@ -264,69 +338,12 @@ double func(const double theta, const double x0, const double y0)
   return x0 * sinTheta + y0 * cosTheta - sinTheta * cosTheta;
 }
 
-bool edgeInHostileRadius(const int startNode, const int endNode)
-{
-  // Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
-  Point &start = planets[startNode].position, end = planets[endNode].position;
-  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
-  double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
-  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
-  double l = run * run + rise * rise; // Length of line
-  for (auto &planet : planets)
-  {
-    if (planet.hostileRadius == 0)
-      continue;
-    Point &center = planet.position;
-    // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
-    // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
-    double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
-    double discriminant = b * b - 4 * c;
-    // If discriminant < 0, no solution and edge does not cross hostile circle
-    if (discriminant < 0)
-      continue;
-    double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2; // Roots from quadratic formula
-    // If both values for d are lower or higher than edge length, hostile circle is still not crossed
-    if ((d1 < 0 && d2 < 0) || (d1 * d1 > l && d2 * d2 > l))
-      continue;
-    return true;
-  }
-  return false;
-}
-
-// Returns cost (time + resource consumption) of edge connecting two nodes
-double calculateCost(int node1, int node2)
-{
-  double d = nodeDistances[node1][node2];
-  double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
-  switch (planets[node2].resupply)
-  {
-    case OXYGEN:
-      speed = singleResupplySpeed, t = d / speed;
-      oxygenConsumed = 0;
-      foodConsumed = kl * t;
-      break;
-    case FOOD:
-      speed = singleResupplySpeed, t = d / speed;
-      foodConsumed = 0;
-      oxygenConsumed = kl * t;
-      break;
-    default:
-      speed = idealSpeed, t = d / speed;
-      oxygenConsumed = foodConsumed = kl * t;
-      break;
-  }
-  fuelConsumed = kf * d * speed * speed;
-  return t + fuelConsumed + oxygenConsumed + foodConsumed;
-}
-
 // Extracts data from inputted CSV map with error handling
 int parseCSV()
 {
   if (fileName.empty())
   {
-    cout << endl;
-    cout << "Input map file: ";
+    cout << endl << "Input map file: ";
     getline(cin, fileName);
   }
   ifstream iFile;
@@ -398,8 +415,17 @@ int parseCSV()
     planetName = trim(line.substr(0, commaIndex));
     if (planetName.empty() || !isValidPlanet(planetName))
     {
-      cout << "Error: \"" << planetName << "\" (entry " << lineNumber << ") is an invalid planet name. Planet names must be alphanumeric (spaces, dashes, and parenthesis accepted)." << endl;
+      cout << "Error: Invalid planet name \"" << planetName << "\" found on entry " << lineNumber << ". Planet names must be alphanumeric (spaces, dashes, and parentheses accepted)." << endl;
       return -1;
+    }
+    int planetCount = planets.size();
+    for (int i = 0; i < planetCount; i++)
+    {
+      if (planets[i].name == planetName)
+      {
+        cout << "Error: Duplicate planet name \"" << planetName << "\" found on entries " << i + 2 << " and " << lineNumber << "." << endl;
+        return -1;
+      }
     }
     line = line.substr(commaIndex + 1);
 
@@ -412,7 +438,7 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The x-coordinate (\"" << substring << "\") of planet \"" << planetName << "\" (entry " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The x-coordinate (\"" << substring << "\") of planet " << planetName << " (entry " << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -426,7 +452,7 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The y-coordinate (\"" << substring << "\") of planet \"" << planetName << "\" (entry " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The y-coordinate (\"" << substring << "\") of planet " << planetName << " (entry " << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -436,7 +462,7 @@ int parseCSV()
     type = trim(toLower(line.substr(0, commaIndex)));
     if (type != "neutral" && type != "hostile")
     {
-      cout << "Error: The type (\"" << type << "\") of planet \"" << planetName << "\" (entry " << lineNumber << ") must be \"neutral\" or \"hostile\"." << endl;
+      cout << "Error: The type (\"" << type << "\") of planet " << planetName << " (entry " << lineNumber << ") must be \"neutral\" or \"hostile\"." << endl;
       return -1;
     }
     line = line.substr(commaIndex + 1);
@@ -453,7 +479,7 @@ int parseCSV()
       resupplyEnum = NONE;
     else
     {
-      cout << "Error: The resupply (\"" << resupply << "\") of planet \"" << planetName << "\" (entry " << lineNumber << ") must be \"\" (none), \"food\", or \"oxygen\"." << endl;
+      cout << "Error: The resupply (\"" << resupply << "\") of planet " << planetName << " (entry " << lineNumber << ") must be \"\" (none), \"food\", or \"oxygen\"." << endl;
       return -1;
     }
     line = trim(line.substr(commaIndex + 1));
@@ -465,20 +491,38 @@ int parseCSV()
     }
     catch (...)
     {
-      cout << "Error: The hostile radius (\"" << line << "\") of planet \"" << planetName << "\" (entry " << lineNumber << ") must be numerical." << endl;
+      cout << "Error: The hostile radius (\"" << line << "\") of planet " << planetName << " (entry " << lineNumber << ") must be numerical." << endl;
       return -1;
     }
     if (type == "neutral" && hostileRadius != 0)
     {
-      cout << "Error: The hostile radius (" << hostileRadius << ") of neutral planet \"" << planetName << "\" (entry " << lineNumber << ") must be 0." << endl;
+      cout << "Error: The hostile radius (" << hostileRadius << ") of neutral planet " << planetName << " (entry " << lineNumber << ") must be 0." << endl;
       return -1;
     }
-    else if (type == "hostile" && hostileRadius <= 0)
+    else if (type == "hostile")
     {
-      cout << "Error: The hostile radius (" << hostileRadius << ") of hostile planet \"" << planetName << "\" (entry " << lineNumber << ") must be positive." << endl;
-      return -1;
+      if (lineNumber == 2)
+      {
+        cout << "Error: The first planet (" << planetName << ") cannot be hostile." << endl;
+        return -1;
+      }
+      else if (hostileRadius <= 0)
+      {
+        cout << "Error: The hostile radius (" << hostileRadius << ") of hostile planet " << planetName << " (entry " << lineNumber << ") must be positive." << endl;
+        return -1;
+      }
     }
     planets.emplace_back(planetName, x, y, resupplyEnum, hostileRadius);
+  }
+  if (lineNumber < 3)
+  {
+    cout << "Error: There must be at least 2 planets in the map." << endl;
+    return -1;
+  }
+  if (planets.back().hostileRadius != 0)
+  {
+    cout << "Error: The last planet (" << planets.back().name << ") cannot be hostile." << endl;
+    return -1;
   }
   nodeCount = lineNumber - 1;
   lastNodeIndex = nodeCount - 1;
@@ -589,7 +633,7 @@ void dijkstra()
 }*/
 
 // Implements modified A* algorithm to find single approximate best-path
-int aStar(vector<int> &bestPath, int source, int sink)
+int aStar(vector<int> &bestPath, const int source, const int sink)
 {
   vector<NodeData> nodes;
   for (int i = 0; i < nodeCount; i++)
@@ -649,7 +693,7 @@ int aStar(vector<int> &bestPath, int source, int sink)
   return 0;
 }
 
-void printPath(string id, vector<int> &path, double score)
+void printPath(const string id, const vector<int> &path, const double score)
 {
   if (id.length() > 0)
     cout << id << ": ";
@@ -659,11 +703,12 @@ void printPath(string id, vector<int> &path, double score)
 }
 
 // Implements modified Yen's algorithm to find pathCount approximately-best paths
-int yens(vector<vector<int>> &bestPaths, int pathCount)
+int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
 {
   vector<int> bestPath;
   if (aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
   bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
+  printPath("Best", bestPath, 0);
   vector<vector<int>> potentialPaths;
   for (int k = 1; k < pathCount; k++)
   {
@@ -686,13 +731,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       }
 
       vector<int> spurPath;
-      if (aStar(spurPath, spurNode, lastNodeIndex) == -1) // Calculate spur path from spur node to sink
-        continue;
-      vector<int> totalPath = rootPath;
-      totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
-      if (find(potentialPaths.begin(), potentialPaths.end(), totalPath) == potentialPaths.end())
-        potentialPaths.push_back(totalPath); // If complete path not already in potential paths, add it
-      
+      int error = aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
       // Restore removed edges/nodes
       for (auto path : bestPaths)
       {
@@ -707,6 +746,16 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
           nodeCosts[lastBestPath[j]][m] = initialCosts[lastBestPath[j]][m];
           nodeCosts[m][lastBestPath[j]] = initialCosts[m][lastBestPath[j]];
         }
+      }
+      
+      if (error == -1) 
+        continue;
+      vector<int> totalPath = rootPath;
+      totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
+      if (find(potentialPaths.begin(), potentialPaths.end(), totalPath) == potentialPaths.end())
+      {
+        printPath("Potential - " + to_string(k), totalPath, 0);
+        potentialPaths.push_back(totalPath); // If complete path not already in potential paths, add it
       }
     }
 
@@ -723,7 +772,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       double cost = 0;
       for (int j = 1; j < pathLength; j++)
       {
-        cost += nodeCosts[path[j-1]][path[j]];
+        cost += initialCosts[path[j-1]][path[j]];
       }
       if (cost < bestCost)
       {
@@ -731,11 +780,83 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
         bestPathIndex = i;
       }
     }
+    cout << "Best path index: " << bestPathIndex << endl;
+    cout << "Best cost: " << bestCost << endl;
     if (bestPathIndex >= 0) 
     {
+      printPath("Best - k=" + to_string(k) + ", i=" + to_string(bestPathIndex), potentialPaths[bestPathIndex], bestCost);
       bestPaths.push_back(potentialPaths[bestPathIndex]);
       potentialPaths.erase(potentialPaths.begin() + bestPathIndex); 
     }
+  }
+  return 0;
+}
+
+// Implements modified Yen's algorithm to find pathCount approximately-best paths
+int yens(vector<vector<int>> &bestPaths, int pathCount)
+{
+  vector<int> bestPath;
+  if (aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
+  //printPath("Best", bestPath, 0);
+  bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
+  set<Path> potentialPaths; // Use set to avoid duplicates and automatic sorting
+  for (int k = 1; k < pathCount; k++)
+  {
+    vector<int> lastBestPath = bestPaths.back();
+    int n = lastBestPath.size() - 1;
+    for (int i = 0; i < n; i++)
+    {
+      int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
+      vector<int> rootPath(lastBestPath.begin(), lastBestPath.begin() + i + 1); // Sequence of nodes from source to spur node
+      for (auto path : bestPaths)
+      {
+        vector<int> segment(path.begin(), path.begin() + i + 1);
+        if (rootPath == segment)
+          nodeCosts[path[i]][path[i+1]] = INF; // Remove links from spur nodes of other paths sharing same same root to prevent duplicate paths
+      }
+      for (int j = 0; j < i; j++)
+      {
+        for (int m = 0; m < nodeCount; m++)
+          nodeCosts[lastBestPath[j]][m] = nodeCosts[m][lastBestPath[j]] = INF; // Remove all nodes in root path from graph to prevent cycles
+      }
+
+      vector<int> spurPath;
+      int error = aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
+      // Restore removed edges/nodes
+      for (auto path : bestPaths)
+      {
+        vector<int> segment(path.begin(), path.begin() + i + 1);
+        if (rootPath == segment)
+          nodeCosts[path[i]][path[i+1]] = initialCosts[path[i]][path[i+1]];
+      }
+      for (int j = 0; j < i; j++)
+      {
+        for (int m = 0; m < nodeCount; m++)
+        {
+          nodeCosts[lastBestPath[j]][m] = initialCosts[lastBestPath[j]][m];
+          nodeCosts[m][lastBestPath[j]] = initialCosts[m][lastBestPath[j]];
+        }
+      }
+
+      if (error == -1)
+        continue;
+      vector<int> totalPath = rootPath;
+      totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
+      int pathLength = totalPath.size();
+      double cost = 0;
+      for (int j = 1; j < pathLength; j++)
+        cost += initialCosts[totalPath[j-1]][totalPath[j]];
+      //printPath("Potential - " + to_string(k), totalPath, cost);
+      potentialPaths.emplace(totalPath, cost); // Adds complete path sorted by ascending cost, avoiding duplicates
+    }
+
+    if (potentialPaths.empty()) // No spur paths (e.g. all already exhausted or none exist)
+      break;
+    auto it = potentialPaths.begin();
+    const Path &path = *it; // First element of set returns best path
+    //printPath("Best - " + to_string(k), path.path, path.cost);
+    bestPaths.push_back(path.path);
+    potentialPaths.erase(it);
   }
   return 0;
 }
@@ -789,11 +910,11 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
   {
     x1 = boundary.xb;
     y1 = boundary.yb;
-    if (1 + x1 == 1)
+    if (fabs(x1) < EPSILON)
     {
       xi = y1 / m;
     }
-    else if (1 + y1 == 1)
+    else if (fabs(y1) < EPSILON)
     {
       xi = x1;
     }
@@ -922,11 +1043,11 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
   double thetaMax = M_PI_2;
   for (i = 0; i < bs.size(); i++)
   {
-    if (1 == 1 + bs[i].xb)
+    if (fabs(bs[i].xb) < EPSILON)
     {
       thetaMin = max(thetaMin, asin(bs[i].yb));
     }
-    else if (1 == 1 + bs[i].yb)
+    else if (fabs(bs[i].yb) < EPSILON)
     {
       thetaMax = min(thetaMax, acos(bs[i].xb));
     }
@@ -1417,15 +1538,11 @@ int oldOptimizePath(vector<int> &path, vector<double> &speeds, vector<double> &f
 */
 void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
-  for (int i = 0; i < 135; i++)
-    cout << "-";
-  cout << endl << endl;
-  cout << "Name of map used: " << mapName << endl;
   string startPlanet = planets[0].name;
-  cout << "Computing route from " << startPlanet << " to " << planets[lastNodeIndex].name + "..." << endl;
-  cout << endl;
-  cout << "Planet travel order (excluding " << startPlanet << "): " << endl;
-  cout << endl;
+  cout << endl << endl << "PROGRAM OUTPUT:" << endl;
+  cout << "Computing Route from " << startPlanet << " to " << planets[lastNodeIndex].name + "..." << endl << endl;
+  cout << "Name of Map Used: " << mapName << endl;
+  cout << "Planet Travel Order (excluding " << startPlanet << "): " << endl << endl;
   cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
   cout << scientific << setprecision(5);
   double travelTime = 0.0;
@@ -1469,8 +1586,7 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
          << setw(12) << s
          << endl;
   }
-  cout << endl;
-  cout << "Final stats: " << endl;
+  cout << endl << "Final stats: " << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
   cout << "Total time: " << travelTime << endl;
   cout << "Total Distance: " << travelDistance << endl;
@@ -1483,9 +1599,8 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
 
 void testPath()
 {
-  cout << endl;
   string input;
-  cout << "Path (New): ";
+  cout << endl << "Path (New): ";
   getline(cin, input);
   cout << endl;
   int commaCount = count(input.begin(), input.end(), ',');
@@ -1519,9 +1634,8 @@ void testPath()
 
 void oldTestPath()
 {
-  cout << endl;
   string input, input2;
-  cout << "Path (Old): ";
+  cout << endl << "Path (Old): ";
   getline(cin, input);
   cout << "Speeds: ";
   getline(cin, input2);
@@ -1555,8 +1669,7 @@ void oldTestPath()
   }
 
   cout << "Name of map used: " << mapName << endl;
-  cout << "Planet travel order (all values rounded to 4 decimals and in AU): " << endl;
-  cout << endl;
+  cout << "Planet travel order (all values rounded to 4 decimals and in AU): " << endl << endl;
   cout << right << setw(14) << "Planet: " << setw(14) << "Speed: " << setw(14) << "Dist: " << setw(14) << "Total Time: " << setw(14) << "Fuel: " << setw(14) << "Oxyg: " << setw(14) << "Food: " << setw(15) << "Score: " << endl;
   cout << fixed;
   int pathLength = path.size();
@@ -1629,8 +1742,7 @@ void oldTestPath()
     }
     node0 = node;
   }
-  cout << endl;
-  cout << "Final stats: " << endl;
+  cout << endl << "Final stats: " << endl;
   array<double, 3> lastNode = pathData[pathLength - 1];
   double fuelLeft = lastNode[0], oxygenLeft = lastNode[1], foodLeft = lastNode[2];
   cout << "Travel time: " << travelTime << endl;
@@ -1722,6 +1834,7 @@ int main(int argc, char *argv[])
     {"skipm3", required_argument, 0, 'q'}, // Skip speed optimization method 3
     {"skipSingle", required_argument, 0, 'w'}, // Skip single search
     {"skipOld", required_argument, 0, 'l'}, // Skip old optimization methods
+    {"oldYens", required_argument, 0, 'y'}, // Use old Yens algorithm
     {0, 0, 0, 0}
   };
   while ((opt = getopt_long(argc, argv, "m:f:o:d:s:t:k:e:n:r:p:q:w:l", long_options, &index)) != -1)
@@ -1770,13 +1883,15 @@ int main(int argc, char *argv[])
       case 'l':
         skipOld = atoi(optarg);
         break;
+      case 'y':
+        useOldYens = atoi(optarg);
+        break;
       default:
         break;
     }
   }
   
-  cout << endl;
-  cout << "Welcome Mission Control!" << endl;
+  cout << endl << "Welcome Mission Control!" << endl;
   if (fileName.empty())
   {
     cout << "Use these instructions to begin stress-testing:" << endl;
@@ -1812,15 +1927,29 @@ int main(int argc, char *argv[])
   long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
   vector<vector<int>> bestPaths;
-  if (yens(bestPaths, maxPaths) == -1)
+  int pathCount = maxPaths * nodeCount;
+  if (pathCount > 1000) pathCount = 1000;
+  else if (pathCount < 25) pathCount = 25;
+  if (useOldYens == 1)
   {
-    cout << "Mission failed: Valid path could not be found. Please try again." << endl;
-    return -1;
+    if (oldYens(bestPaths, pathCount) == -1)
+    {
+      cout << "Mission failed: Valid path could not be found. Please try again." << endl;
+      return -1;
+    }
+  }
+  else
+  {
+    if (yens(bestPaths, pathCount) == -1)
+    {
+      cout << "Mission failed: Valid path could not be found. Please try again." << endl;
+      return -1;
+    }
   }
   double bestScore = INF;
   vector<int> bestPath;
   vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood;
-  int ipath = 0;
+  //int ipath = 0;
   for (auto &path : bestPaths)
   {
     int pathLength = path.size();
@@ -1839,7 +1968,7 @@ int main(int argc, char *argv[])
       if (pathLength > 1)
       {
         score -= (fuel.back() + oxygen.back() + food.back());
-        printPath("path "+to_string(ipath), path, score);
+        //printPath("path "+to_string(ipath), path, score);
       } 
       else
         score = INF;
@@ -1853,7 +1982,7 @@ int main(int argc, char *argv[])
         bestFood = food;
       }
     }
-    ipath++;
+    //ipath++;
   }
   if (bestScore < INF)
     printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood);
@@ -1861,6 +1990,16 @@ int main(int argc, char *argv[])
   {
     cout << "Mission failed: Valid path could not be found. Please try again." << endl;
     return -1;
+  }
+
+  long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
+  double milliseconds = calcTime / 1000.0;
+  cout << endl << "Calculation time: " << fixed << setprecision(4) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl << endl;
+
+  while (testMode > 0)
+  {
+    oldTestPath();
+    testPath();
   }
 
   /*long long calcTime;
@@ -1925,15 +2064,4 @@ int main(int argc, char *argv[])
     }
   }
   */
-
-  cout << endl;
-  long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-  cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
-  cout << endl;
-
-  while (testMode > 0)
-  {
-    oldTestPath();
-    testPath();
-  }
 }
