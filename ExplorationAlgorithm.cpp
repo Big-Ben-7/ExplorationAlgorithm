@@ -27,7 +27,7 @@ using namespace std;
 int scanSlope = 51;
 int idealCheck = 1;
 int nproc = 0;
-double searchThreshold = 1.5;
+int maxPaths = 1000;
 int skipM1 = 0;
 int skipM2 = 0;
 int skipM3 = 0;
@@ -95,6 +95,20 @@ struct PlanetData
       return node1 < other1;
   }
 };*/
+struct GraphNode
+{
+  int nodeIndex;
+  double cost;
+  GraphNode(int n, double c)
+  {
+    nodeIndex = n;
+    cost = c;
+  }
+  /*bool operator<(const ConnectedNode &other) const
+  {
+    return nodeIndex < other.nodeIndex;
+  }*/
+};
 struct NodeData
 {
   double minCost;
@@ -105,7 +119,7 @@ struct NodeData
     previousNode = -1;
   }
 };
-// Represents one node in a node tree
+/*// Represents one node in a node tree
 struct TreeNode
 {
   int nodeIndex;
@@ -118,19 +132,7 @@ struct TreeNode
     parent = p;
     cost = c;
   }
-};
-struct BestPath
-{
-  int index;
-  vector<int> path;
-  vector<double> speeds, fuel, oxygen, food;
-  double score;
-  BestPath()
-  {
-    index = -1;
-    score = INF;
-  }
-};
+};*/
 struct BestSlope
 {
   int index;
@@ -145,13 +147,15 @@ struct BestSlope
 };
 
 chrono::steady_clock::time_point startTime;
-vector<vector<double>> nodeDistances;
 vector<double> heuristics;
 vector<PlanetData> planets;
 int nodeCount, lastNodeIndex;
-vector<vector<pair<int, double>>> adjacencyList; // Adjacency list structure used to efficiently represent graph
-vector<NodeData> nodes;
-vector<TreeNode *> possiblePaths;
+// 3 adjacency matrix structure used to efficiently represent graph, containing distance, initial cost, and cost between two node indices
+vector<vector<double>> nodeCosts;
+vector<vector<double>> nodeDistances;
+vector<vector<double>> initialCosts; // Used in Yen's algorithm to reset removed edges
+//vector<vector<ConnectedNode>> adjacencyList; // Adjacency list structure used to efficiently represent graph
+//vector<TreeNode *> possiblePaths;
 
 const double kf = DEF_KF;
 const double kl = DEF_KL;
@@ -482,21 +486,18 @@ int parseCSV()
   return 0;
 }
 
-// Provides setup for A-star pathfinding
+// Provides pathfinding setup
 void initializeLists()
 {
-  // Heuristic constant for A-star pathfinding (minimum cost per unit distance traveled)
+  // Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
   heuristics = vector<double>(nodeCount);
   Point lastPlanetPos = planets[lastNodeIndex].position;
-  // Set distance to initial node to 0
-  nodes.emplace_back(0);
+  nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
-  adjacencyList = vector<vector<pair<int, double>>>(nodeCount);
+  initialCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   for (int i = 0; i < nodeCount; i++)
   {
-    if (i != 0) // Set pre-relaxed distance to all other nodes to infinity
-      nodes.emplace_back(INF);
     double hostileRadius = planets[i].hostileRadius;
     // Fills adjacency list with list of nodes connected to each node
     for (int j = i + 1; j < nodeCount; j++)
@@ -504,17 +505,22 @@ void initializeLists()
       // Eliminate edges crossing hostile radius
       if (hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
-        nodeDistances[i][j] = nodeDistances[j][i] = INF;
+        //nodeDistances[i][j] = nodeDistances[j][i] = INF;
+        nodeCosts[i][j] = initialCosts[i][j] = INF;
         if (j == lastNodeIndex)
           heuristics[i] = heuristic * calculateDistance(planets[i].position, lastPlanetPos);
         continue;
       }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
-      adjacencyList[i].emplace_back(j, calculateCost(i, j));
-      adjacencyList[j].emplace_back(i, calculateCost(j, i));
-      if (j == lastNodeIndex)
-        heuristics[i] = heuristic * distance;
-    }    
+      if (i != lastNodeIndex) nodeCosts[i][j] = initialCosts[i][j] = calculateCost(i, j);
+      else nodeCosts[i][j] = initialCosts[i][j] = INF;
+      if (j != lastNodeIndex) nodeCosts[j][i] = initialCosts[j][i] = calculateCost(j, i);
+      else
+      {
+        nodeCosts[j][i] = initialCosts[j][i] = INF;
+        heuristics[i] = heuristic * distance; // Use Euclidian distance to target as A* heuristic for each node
+      }
+    }
   }
 }
 
@@ -556,66 +562,96 @@ void dijkstra()
   pq.emplace(0, 0);
   while (!pq.empty())
   {
-    int node1Index = pq.top().second;
+    int node1 = pq.top().second;
     pq.pop();
-    if (visited[node1Index]) continue;
-    visited[node1Index] = true;
-    if (node1Index == lastNodeIndex) // Reached target
+    if (visited[node1]) continue;
+    visited[node1] = true;
+    if (node1 == lastNodeIndex) // Reached target
       return;
     
-    NodeData &node1Data = nodes[node1Index];
-    for (auto &node2 : adjacencyList[node1Index]) // Iterate through adjacent nodes
+    NodeData &node1Data = nodes[node1];
+    for (auto &node2 : adjacencyList[node1]) // Iterate through adjacent nodes
     {
-      int node2Index = node2.first;
-      if (visited[node2Index]) continue;
+      int node2 = node2.first;
+      if (visited[node2]) continue;
       double cost = node2.second, newCost = cost + node1Data.minCost;
-      NodeData &node2Data = nodes[node2Index];
+      NodeData &node2Data = nodes[node2];
       if (newCost < node2Data.minCost)
       {
         // Relax edge
         node2Data.minCost = newCost;
-        node2Data.previousNode = node1Index;
-        pq.emplace(newCost, node2Index); // Push negative cost so that queue sorts lowest cost (least negative) at top
+        node2Data.previousNode = node1;
+        pq.emplace(newCost, node2); // Push negative cost so that queue sorts lowest cost (least negative) at top
       }
     }
   }
 }*/
 
-// Implements modified A-star algorithm to find approximate best-path
-void aStar()
+// Implements modified A* algorithm to find single approximate best-path
+int aStar(vector<int> &bestPath, int source, int sink)
 {
+  vector<NodeData> nodes;
+  for (int i = 0; i < nodeCount; i++)
+  {
+    if (i == source) nodes.emplace_back(0); // Set distance to initial node to 0
+    else nodes.emplace_back(INF); // Set pre-relaxed distance to all other nodes to infinity
+  }
+  
   // Priority queue of <cost, index> to pick most promising (least cost) node
   priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
+  pq.emplace(0, source);
   vector<bool> visited = vector<bool>(nodeCount);
-  pq.emplace(0, 0);
   while (!pq.empty())
   {
-    int node1Index = pq.top().second;
+    int node1 = pq.top().second;
     pq.pop();
-    if (visited[node1Index]) continue;
-    visited[node1Index] = true;
-    if (node1Index == lastNodeIndex) // Reached target
-      return;
+    if (visited[node1])
+      continue;
+    visited[node1] = true;
+    if (node1 == sink) // Reached target
+      break;
     
-    NodeData &node1Data = nodes[node1Index];
-    for (auto &node2 : adjacencyList[node1Index]) // Iterate through adjacent nodes
+    double minCost = nodes[node1].minCost;
+    for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
     {
-      int node2Index = node2.first;
-      if (visited[node2Index]) continue;
-      double cost = node2.second, newCost = cost + node1Data.minCost;
-      NodeData &node2Data = nodes[node2Index];
+      double cost = nodeCosts[node1][node2];
+      if (visited[node2] || cost == INF)
+        continue;
+      double newCost = cost + minCost;
+      NodeData &node2Data = nodes[node2];
       if (newCost < node2Data.minCost)
       {
         // Relax edge
         node2Data.minCost = newCost;
-        node2Data.previousNode = node1Index;
-        pq.emplace(newCost + heuristics[node2Index], node2Index); // Push negative cost so that queue sorts lowest cost (least negative) at top
+        node2Data.previousNode = node1;
+        pq.emplace(newCost + heuristics[node2], node2);
       }
     }
   }
+  
+  // Reconstruct path found by A* algorithm
+  NodeData node = nodes.back();
+  bestPath.push_back(sink);
+  while (true)
+  {
+    int previousNode = node.previousNode;
+    if (previousNode < 0) break;
+    bestPath.push_back(previousNode);
+    node = nodes[previousNode];
+  }
+  if (bestPath.size() == 0) return -1;
+  reverse(bestPath.begin(), bestPath.end());
+  return 0;
 }
 
-// Determines list of best paths by finding paths that have a cost close to approximate best path but 
+// Implements modified Yen's algorithm to find k approximately-best paths
+int yens(vector<vector<int>> &bestPaths, int k)
+{
+  
+  return 0;
+}
+
+/*// Determines list of best paths by finding paths that have a cost close to approximate best path but 
 void findPathTree(TreeNode *head, double minCost, double maxCost)
 {
   static int id = 0;
@@ -651,6 +687,7 @@ void findPathTree(TreeNode *head, double minCost, double maxCost)
     findPathTree(children.back(), minCost, maxCost);
   }
 }
+*/
 
 // Optimizes speed of individual graph edge in optimizeSpeed
 int getIdealSpeed(double &v1, double &v2, double &score, const double m,
@@ -778,7 +815,7 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
       rtp = FOOD;
       q0 = food0;
     }
-    int ip = i0 - 1;
+    int bestIndex = i0 - 1;
     for (i = i0; i <= i1; i++)
     {
       int node = path[i];
@@ -788,22 +825,22 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
         double bx = vx * kl / q0, by = vy * kl / q0;
         if (i <= im)
         {
-          ix = ci[i - i0 + 1] - ci[ip - i0 + 1];
+          ix = ci[i - i0 + 1] - ci[bestIndex - i0 + 1];
           bs.emplace_back(bx * ix, 0.0);
         }
-        else if (ip < im)
+        else if (bestIndex < im)
         {
-          ix = ci[im - i0 + 1] - ci[ip - i0 + 1];
+          ix = ci[im - i0 + 1] - ci[bestIndex - i0 + 1];
           iy = ci[i - i0 + 1] - ci[im - i0 + 1];
           bs.emplace_back(bx * ix, by * iy);
         }
         else
         {
-          iy = ci[i - i0 + 1] - ci[ip - i0 + 1];
+          iy = ci[i - i0 + 1] - ci[bestIndex - i0 + 1];
           bs.emplace_back(0, by * iy);
         }
-        // cout << "bs:" << rtp << "," << q0 << "," << ir << "," << ix << "," << iy << "," << bx*ix << "," << by*iy << "," << i << "," << ip << "," << im << "," << i0 << endl;
-        ip = i;
+        // cout << "bs:" << rtp << "," << q0 << "," << ir << "," << ix << "," << iy << "," << bx*ix << "," << by*iy << "," << i << "," << bestIndex << "," << im << "," << i0 << endl;
+        bestIndex = i;
         q0 = ir == 0 ? maxOxygen : maxFood;
       }
     }
@@ -948,7 +985,7 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
   vector<double> mb = vector<double>(pathLength);
   
   // Method 1: set ideal speed by disregard both, one, or none of the kl terms if node is before both, one or none of the resupplies
-  for (int i = pathLength - 1; i >= 0; i--)
+  for (int i = pathLength - 1; i >= 1; i--)
   {
     // Iterate backward to find last oxygen and food resupplies
     Resupply resupply = planets[path[i]].resupply;
@@ -1038,13 +1075,11 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
     }
   }
   double fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
-  double totalDistance = 0.0;
-  int node0 = 0;
   // It can be mathematically proven (eg. with Lagrange multipliers) that the ideal speed is the same for all nodes with the same resupplyAfter type
-  for (int i = 0; i < pathLength; i++)
+  for (int i = 1; i < pathLength; i++)
   {
     int node = path[i];
-    double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed, consumed = kl * t;
+    double speed = speeds[i], distance = nodeDistances[path[i-1]][node], t = distance / speed, consumed = kl * t;
     foodLeft -= consumed, oxygenLeft -= consumed;
     if (error == 0 && (oxygenLeft < 0.0001 || foodLeft < 0.0001))
       error = -1;
@@ -1061,8 +1096,6 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
       default:
         break;
     }
-    totalDistance += distance;
-    node0 = node;
   }
   if (skipM1 == 0 && error == 0 && fuelLeft >= 0.0001)
     return 0;
@@ -1070,18 +1103,17 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
   // Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
   if (skipM2 == 0)
   {
-    
     double totalFuelConsumed = maxFuel - fuelLeft;
     double speedFactor = sqrt((maxFuel - 0.0001) / (totalFuelConsumed));
     fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
-    node0 = error = 0;
+    error = 0;
     if (totalFuelConsumed >= maxFuel)
     {
-      for (int i = 0; i < pathLength; i++)
+      for (int i = 1; i < pathLength; i++)
       {
         int node = path[i];
         speeds[i] *= speedFactor;
-        double speed = speeds[i], distance = nodeDistances[node0][node], t = distance / speed, consumed = kl * t;
+        double speed = speeds[i], distance = nodeDistances[path[i-1]][node], t = distance / speed, consumed = kl * t;
         fuelLeft -= kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
         if (oxygenLeft < 0.0001 || foodLeft < 0.0001)
         {
@@ -1100,15 +1132,14 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
           default:
             break;
         }
-        node0 = node;
       }
     }
     else
     {
-      for (int i = 0; i < pathLength; i++)
+      for (int i = 1; i < pathLength; i++)
       {
         int node = path[i];
-        double distance = nodeDistances[node0][node], speed = speeds[i];
+        double distance = nodeDistances[path[i-1]][node], speed = speeds[i];
         double minOxygenSpeed = distance / ((oxygenLeft - 0.0001) / kl);
         double minFoodSpeed = distance / ((foodLeft - 0.0001) / kl);
         double minSpeed = max(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
@@ -1136,7 +1167,6 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
           default:
             break;
         }
-        node0 = node;
       }
     }
     if (error == 0)
@@ -1147,12 +1177,11 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
   if (skipM3 == 0)
   {
     fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
-    node0 = 0;
     double speed, speedNext, score;
-    for (int i = 0; i < pathLength; i++)
+    for (int i = 1; i < pathLength; i++)
     {
       int node = path[i];
-      double distance = nodeDistances[node0][node];
+      double distance = nodeDistances[path[i-1]][node];
       if (pathLength == 1)
         speed = speeds[i];
       else
@@ -1186,7 +1215,6 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
         default:
           break;
       }
-      node0 = node;
     }
   }
   
@@ -1195,7 +1223,7 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
   else
     return -1;
 }
-
+/*
 int oldOptimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   int pathLength = path.size();
@@ -1314,21 +1342,15 @@ int oldOptimizePath(vector<int> &path, vector<double> &speeds, vector<double> &f
     return -1;
   return 0;
 }
-
+*/
 void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
-  int pathLength = path.size();
   for (int i = 0; i < 135; i++)
     cout << "-";
   cout << endl << endl;
   cout << "Name of map used: " << mapName << endl;
   string startPlanet = planets[0].name;
   cout << "Computing route from " << startPlanet << " to " << planets[lastNodeIndex].name + "..." << endl;
-  if (pathLength == 0)
-  {
-    cout << "Mission failed: Valid path could not be found. Please try again." << endl;
-    return;
-  }
   cout << endl;
   cout << "Planet travel order (excluding " << startPlanet << "): " << endl;
   cout << endl;
@@ -1338,6 +1360,7 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
   double travelTime = 0.0;
   double travelDistance = 0.0;
   //double ucost = 0.0;
+  int pathLength = path.size();
   for (int i = 0; i < pathLength; i++)
   {
     int node = path[i];
@@ -1547,7 +1570,7 @@ void oldTestPath()
   cout << "Final score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
 }
 
-// Searches list of best paths to find final optimal solution
+/*// Searches list of best paths to find final optimal solution
 int searchBestPaths(double minCost, double maxCost)
 {
     TreeNode head = TreeNode(lastNodeIndex, NULL, 0.0);
@@ -1607,7 +1630,7 @@ int searchBestPaths(double minCost, double maxCost)
     }
     else
       return -1;
-}
+}*/
 
 int main(int argc, char *argv[])
 {
@@ -1648,7 +1671,7 @@ int main(int argc, char *argv[])
         maxFood = atof(optarg);
         break;
       case 's':
-        searchThreshold = atof(optarg);
+        maxPaths = atoi(optarg);
         break;
       case 't':
         testMode = atoi(optarg);
@@ -1713,34 +1736,63 @@ int main(int argc, char *argv[])
   } while (error != 0);
   initializeLists();
 
-  // Pathfinding
+  // Pathfinding and speed/resource optimization
   /*tartTime = chrono::steady_clock::now();
   for (int i = 0; i < 1000000; i++) aStar();
   long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
-  aStar();
-  vector<int> path; 
-  NodeData node = nodes.back();
-  path.push_back(lastNodeIndex);
-  while (true)
+  vector<vector<int>> bestPaths;
+  vector<int> temp;
+  aStar(temp, 0, lastNodeIndex);
+  bestPaths.push_back(temp);
+  /*if (yens(bestPaths, maxPaths) == -1)
   {
-    // Reconstructs path found by A-star
-    int previousNode = node.previousNode;
-    cout << previousNode << endl;
-    if (previousNode <= 0) break;
-    path.push_back(previousNode);
-    node = nodes[previousNode];
+    cout << "Mission failed: Valid path could not be found. Please try again." << endl;
+    return -1;
+  }*/
+  double bestScore = INF;
+  vector<int> bestPath;
+  vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood;
+  for (auto &path : bestPaths)
+  {
+    int pathLength = path.size();
+    if (pathLength == 0)
+      continue;
+    vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
+    if (optimizePath(path, speeds, fuel, oxygen, food) == 0)
+    {
+      double score = 0.0;
+      for (int i = 1; i < pathLength; i++)
+      {
+        cout << path[i] << ", ";
+        score += nodeDistances[path[i-1]][path[i]] / speeds[i];
+      }
+      score -= (fuel.back() + oxygen.back() + food.back());
+      cout << score << endl;
+      if (score < bestScore)
+      {
+        bestScore = score;
+        bestPath = path;
+        bestSpeeds = speeds;
+        bestFuel = fuel;
+        bestOxygen = oxygen;
+        bestFood = food;
+      }
+    }
   }
-  int pathLength = path.size();
-  if (pathLength == 0)
+  if (bestScore < INF)
+  {
+    printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood);
+    return 0;
+  }
+  else
   {
     cout << "Mission failed: Valid path could not be found. Please try again." << endl;
     return -1;
   }
-  reverse(path.begin(), path.end());
 
-  long long calcTime;
-  if (pathLength > 0)
+  /*long long calcTime;
+  if (bestPath.length() > 0)
   {
     vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
     if (skipSingle == 0)
@@ -1799,11 +1851,13 @@ int main(int argc, char *argv[])
         return -1;
       }
     }
-    cout << endl;
-    calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-    cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
-    cout << endl;
   }
+  */
+
+  cout << endl;
+  long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
+  cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
+  cout << endl;
 
   while (testMode > 0)
   {

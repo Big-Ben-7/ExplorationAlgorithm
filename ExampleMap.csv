@@ -3,7 +3,6 @@ Earth,0,0,neutral,,0
 A,100,20,neutral,oxygen,0 
 B,200,50,neutral,food,0 
 C,250,-100,neutral,,0
-C2, 250, -100, neutral,, 0
 D,350,-50,neutral,oxygen,0 
 E,450,100,neutral,food,0 
 F,550,150,neutral,,0 
