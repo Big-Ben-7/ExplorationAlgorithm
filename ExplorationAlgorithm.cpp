@@ -27,7 +27,7 @@ using namespace std;
 int scanSlope = 51;
 int idealCheck = 1;
 int nproc = 0;
-int maxPaths = 1000;
+int maxPaths = 100;
 int skipM1 = 0;
 int skipM2 = 0;
 int skipM3 = 0;
@@ -153,7 +153,7 @@ int nodeCount, lastNodeIndex;
 // 3 adjacency matrix structure used to efficiently represent graph, containing distance, initial cost, and cost between two node indices
 vector<vector<double>> nodeCosts;
 vector<vector<double>> nodeDistances;
-vector<vector<double>> initialCosts; // Used in Yen's algorithm to reset removed edges
+vector<vector<double>> initialCosts; // Used in Yen's algorithm when restoring removed edges/nodes
 //vector<vector<ConnectedNode>> adjacencyList; // Adjacency list structure used to efficiently represent graph
 //vector<TreeNode *> possiblePaths;
 
@@ -521,6 +521,7 @@ void initializeLists()
         heuristics[i] = heuristic * distance; // Use Euclidian distance to target as A* heuristic for each node
       }
     }
+    nodeCosts[i][i] = initialCosts[i][i] = INF;
   }
 }
 
@@ -593,8 +594,10 @@ int aStar(vector<int> &bestPath, int source, int sink)
   vector<NodeData> nodes;
   for (int i = 0; i < nodeCount; i++)
   {
-    if (i == source) nodes.emplace_back(0); // Set distance to initial node to 0
-    else nodes.emplace_back(INF); // Set pre-relaxed distance to all other nodes to infinity
+    if (i == source)
+      nodes.emplace_back(0); // Set distance to initial node to 0
+    else
+      nodes.emplace_back(INF); // Set pre-relaxed distance to all other nodes to infinity
   }
   
   // Priority queue of <cost, index> to pick most promising (least cost) node
@@ -635,19 +638,105 @@ int aStar(vector<int> &bestPath, int source, int sink)
   while (true)
   {
     int previousNode = node.previousNode;
-    if (previousNode < 0) break;
+    if (previousNode < 0)
+      break;
     bestPath.push_back(previousNode);
     node = nodes[previousNode];
   }
-  if (bestPath.size() == 0) return -1;
+  if (bestPath.size() <= 1)
+    return -1;
   reverse(bestPath.begin(), bestPath.end());
   return 0;
 }
 
-// Implements modified Yen's algorithm to find k approximately-best paths
-int yens(vector<vector<int>> &bestPaths, int k)
+void printPath(string id, vector<int> &path, double score)
 {
-  
+  if (id.length() > 0)
+    cout << id << ": ";
+  for (int i : path)
+    cout << i << ", ";
+  cout << score << endl;
+}
+
+// Implements modified Yen's algorithm to find pathCount approximately-best paths
+int yens(vector<vector<int>> &bestPaths, int pathCount)
+{
+  vector<int> bestPath;
+  if (aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
+  bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
+  vector<vector<int>> potentialPaths;
+  for (int k = 1; k < pathCount; k++)
+  {
+    vector<int> lastBestPath = bestPaths.back();
+    int n = lastBestPath.size() - 1;
+    for (int i = 0; i < n; i++)
+    {
+      int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
+      vector<int> rootPath(lastBestPath.begin(), lastBestPath.begin() + i + 1); // Sequence of nodes from source to spur node
+      for (auto path : bestPaths)
+      {
+        vector<int> segment(path.begin(), path.begin() + i + 1);
+        if (rootPath == segment)
+          nodeCosts[path[i]][path[i+1]] = INF; // Remove links that are part of previous shortest paths which share same root path
+      }
+      for (int j = 0; j < i; j++)
+      {
+        for (int m = 0; m < nodeCount; m++)
+          nodeCosts[lastBestPath[j]][m] = nodeCosts[m][lastBestPath[j]] = INF; // Remove all nodes in root path from graph
+      }
+
+      vector<int> spurPath;
+      if (aStar(spurPath, spurNode, lastNodeIndex) == -1) // Calculate spur path from spur node to sink
+        continue;
+      vector<int> totalPath = rootPath;
+      totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
+      if (find(potentialPaths.begin(), potentialPaths.end(), totalPath) == potentialPaths.end())
+        potentialPaths.push_back(totalPath); // If complete path not already in potential paths, add it
+      
+      // Restore removed edges/nodes
+      for (auto path : bestPaths)
+      {
+        vector<int> segment(path.begin(), path.begin() + i + 1);
+        if (rootPath == segment)
+          nodeCosts[path[i]][path[i+1]] = initialCosts[path[i]][path[i+1]];
+      }
+      for (int j = 0; j < i; j++)
+      {
+        for (int m = 0; m < nodeCount; m++)
+        {
+          nodeCosts[lastBestPath[j]][m] = initialCosts[lastBestPath[j]][m];
+          nodeCosts[m][lastBestPath[j]] = initialCosts[m][lastBestPath[j]];
+        }
+      }
+    }
+
+    if (potentialPaths.empty()) // No spur paths (e.g. all already exhausted or none exist)
+      break;
+    // Find best path out of potential paths to add to list of pathCount best paths
+    n = potentialPaths.size();
+    double bestCost = INF;
+    int bestPathIndex = -1;
+    for (int i = 0; i < n; i++)
+    {
+      vector<int> &path = potentialPaths[i];
+      int pathLength = path.size();
+      double cost = 0;
+      for (int j = 1; j < pathLength; j++)
+      {
+        cost += nodeCosts[path[j-1]][path[j]];
+      }
+      if (cost < bestCost)
+      {
+        bestCost = cost;
+        bestPathIndex = i;
+      }
+    }
+    if (bestPathIndex >= 0) 
+    {
+      bestPaths.push_back(potentialPaths[bestPathIndex]);
+      potentialPaths.erase(potentialPaths.begin() + bestPathIndex); 
+    }
+  }
   return 0;
 }
 
@@ -1366,7 +1455,7 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     }
     if (edgeInHostileRadius(path[i-1], node))
       cout << "Edge crosses hostile radius" << endl;
-    cout << i + 1 << ") "
+    cout << i << ") "
          << right
          << setw(11) << planet.name << "   "
          << setw(11) << v << "   "
@@ -1623,7 +1712,7 @@ int main(int argc, char *argv[])
     {"fuel", required_argument, 0, 'f'},
     {"oxygen", required_argument, 0, 'o'},
     {"food", required_argument, 0, 'd'},
-    {"search", required_argument, 0, 's'}, // Search list of best paths for speed optimization
+    {"maxPaths", required_argument, 0, 's'}, // Max number of best paths to generate
     {"test", required_argument, 0, 't'}, // Test path
     {"scank", required_argument, 0, 'k'}, // Scan for best slope during speed optimization
     {"ideal", required_argument, 0, 'e'}, // Use precalculated ideal speeds
@@ -1723,17 +1812,15 @@ int main(int argc, char *argv[])
   long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
   vector<vector<int>> bestPaths;
-  vector<int> temp;
-  aStar(temp, 0, lastNodeIndex);
-  bestPaths.push_back(temp);
-  /*if (yens(bestPaths, maxPaths) == -1)
+  if (yens(bestPaths, maxPaths) == -1)
   {
     cout << "Mission failed: Valid path could not be found. Please try again." << endl;
     return -1;
-  }*/
+  }
   double bestScore = INF;
   vector<int> bestPath;
   vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood;
+  int ipath = 0;
   for (auto &path : bestPaths)
   {
     int pathLength = path.size();
@@ -1746,11 +1833,16 @@ int main(int argc, char *argv[])
       double score = 0.0;
       for (int i = 1; i < pathLength; i++)
       {
-        cout << path[i] << ", ";
-        score += nodeDistances[path[i-1]][path[i]] / speeds[i];
+        double t = nodeDistances[path[i-1]][path[i]] / speeds[i];
+        score += t;
       }
-      score -= (fuel.back() + oxygen.back() + food.back());
-      cout << score << endl;
+      if (pathLength > 1)
+      {
+        score -= (fuel.back() + oxygen.back() + food.back());
+        printPath("path "+to_string(ipath), path, score);
+      } 
+      else
+        score = INF;
       if (score < bestScore)
       {
         bestScore = score;
@@ -1761,12 +1853,10 @@ int main(int argc, char *argv[])
         bestFood = food;
       }
     }
+    ipath++;
   }
   if (bestScore < INF)
-  {
     printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood);
-    return 0;
-  }
   else
   {
     cout << "Mission failed: Valid path could not be found. Please try again." << endl;
