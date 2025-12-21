@@ -748,33 +748,17 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
                   vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   int returnVal = -1;
-  int node0, i, nb, np;
-  double fuel0, oxygen0, food0;
-  if (i0 == 0)
-  {
-    fuel0 = maxFuel;
-    oxygen0 = maxOxygen;
-    food0 = maxFood;
-    nb = 0;
-  }
-  else
-  {
-    fuel0 = fuel[i0 - 1];
-    oxygen0 = oxygen[i0 - 1];
-    food0 = food[i0 - 1];
-    nb = path[i0 - 1];
-  }
+  int i;
+  double fuel0 = fuel[i0 - 1], oxygen0 = oxygen[i0 - 1], food0 = food[i0 - 1];
   int ni = i1 - i0 + 2;
   vector<double> cs = vector<double>(ni), ci = vector<double>(ni);
   cs[0] = 0.0;
   ci[0] = 0.0;
   double dx = 0.0, dy = 0.0, sx = 0.0, sy = 0.0;
   double zx = 0.0, zy = 0.0, mx = 0.0, my = 0.0;
-  node0 = nb;
   for (i = i0; i <= i1; i++)
   {
-    int node = path[i];
-    double di = nodeDistances[node0][node];
+    double di = nodeDistances[path[i-1]][path[i]];
     double ds2 = di * speeds[i] * speeds[i];
     double dos = di / speeds[i];
     double dz2 = cbrt(0.5 * mb[i] / kf);
@@ -796,7 +780,6 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
     // cout << "mb:" << i <<","<<di<<","<<dos<<","<<mb[i]<<","<<dos*mb[i]<<endl;
     cs[i - i0 + 1] = cs[i - i0] + ds2;
     ci[i - i0 + 1] = ci[i - i0] + dos;
-    node0 = node;
   }
   vector<Boundary> bs;
   double vx = sqrt(kf / fuel0 * sx);
@@ -1356,16 +1339,15 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
   cout << endl;
   cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
   cout << scientific << setprecision(5);
-  int node0 = 0;
   double travelTime = 0.0;
   double travelDistance = 0.0;
   //double ucost = 0.0;
   int pathLength = path.size();
-  for (int i = 0; i < pathLength; i++)
+  for (int i = 1; i < pathLength; i++)
   {
     int node = path[i];
     PlanetData planet = planets[node];
-    double d = nodeDistances[node0][node], v = speeds[i], t = d / v;
+    double d = nodeDistances[path[i-1]][node], v = speeds[i], t = d / v;
     //ucost += calculateCost(node0, node);
     travelTime += t;
     travelDistance += d;
@@ -1382,7 +1364,7 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
       default:
         break;
     }
-    if (edgeInHostileRadius(node0, node))
+    if (edgeInHostileRadius(path[i-1], node))
       cout << "Edge crosses hostile radius" << endl;
     cout << i + 1 << ") "
          << right
@@ -1397,7 +1379,6 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
          << setw(9) << fo2 << "   "
          << setw(12) << s
          << endl;
-    node0 = node;
   }
   cout << endl;
   cout << "Final stats: " << endl;
@@ -1759,6 +1740,7 @@ int main(int argc, char *argv[])
     if (pathLength == 0)
       continue;
     vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
+    fuel[0] = maxFuel, oxygen[0] = maxOxygen, food[0] = maxFood;
     if (optimizePath(path, speeds, fuel, oxygen, food) == 0)
     {
       double score = 0.0;
