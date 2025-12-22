@@ -632,7 +632,7 @@ void dijkstra()
   }
 }*/
 
-// Implements modified A* algorithm to find single approximate best-path
+// Implements modified A* algorithm to find single best-path from source to sink node
 int aStar(vector<int> &bestPath, const int source, const int sink)
 {
   vector<NodeData> nodes;
@@ -1143,7 +1143,7 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
       }
     }
   }
-  if (scanSlope == 0 || idealCheck > 0)
+  if (scanSlope <= 3 || idealCheck > 0)
   {
     b = mx * vx + my * vy / idealSlope;
     c = fuel0 + fuel0 * idealSlope * idealSlope;
@@ -1539,8 +1539,8 @@ int oldOptimizePath(vector<int> &path, vector<double> &speeds, vector<double> &f
 void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   string startPlanet = planets[0].name;
-  cout << endl << endl << "PROGRAM OUTPUT:" << endl;
-  cout << "Computing Route from " << startPlanet << " to " << planets[lastNodeIndex].name + "..." << endl << endl;
+  cout << endl << endl << "PROGRAM OUTPUT" << endl;
+  cout << "Starting Planet: " << startPlanet << ", Target Planet: " << planets[lastNodeIndex].name << endl;
   cout << "Name of Map Used: " << mapName << endl;
   cout << "Planet Travel Order (excluding " << startPlanet << "): " << endl << endl;
   cout << right << setw(14) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
