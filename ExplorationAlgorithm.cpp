@@ -29,7 +29,9 @@ using namespace std;
 int scanSlope = 51;
 int idealCheck = 1;
 int nproc = 0;
-int maxPaths = 5;
+int maxPaths = 2000;
+int pathFactor = 5;
+int useBidirection = 1;
 int useOldYens = 0;
 int skipM1 = 0;
 int skipM2 = 0;
@@ -158,16 +160,14 @@ struct Path
     cost = c;
   }
   bool operator<(const Path& other) const {
-    if (fabs(cost - other.cost) < 10*EPSILON)
-    {
+    if (fabs(cost - other.cost) < EPSILON)
       return path < other.path; // Allow different paths with same cost
-    }
     return cost < other.cost; // Sort by cost in Yen's algorithm set
   }
 };
 
 chrono::steady_clock::time_point startTime;
-vector<double> heuristics;
+vector<double> heuristics, backHeuristics;
 vector<PlanetData> planets;
 int nodeCount, lastNodeIndex;
 // 3 adjacency matrix structure used to efficiently represent graph, containing distance, initial cost, and cost between two node indices
@@ -535,8 +535,8 @@ void initializeLists()
 {
   // Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
-  heuristics = vector<double>(nodeCount);
-  Point lastPlanetPos = planets[lastNodeIndex].position;
+  heuristics = vector<double>(nodeCount), backHeuristics = vector<double>(nodeCount);
+  Point sourcePos = planets[0].position, sinkPos = planets[lastNodeIndex].position;
   nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   initialCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
@@ -550,23 +550,36 @@ void initializeLists()
       if (hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
         //nodeDistances[i][j] = nodeDistances[j][i] = INF;
-        nodeCosts[i][j] = initialCosts[i][j] = INF;
+        nodeCosts[i][j] = initialCosts[i][j] = nodeCosts[j][i] = initialCosts[j][i] = INF;
         if (j == lastNodeIndex)
-          heuristics[i] = heuristic * calculateDistance(planets[i].position, lastPlanetPos);
+          heuristics[i] = heuristic * calculateDistance(planets[i].position, sinkPos);
+        if (i == 0)
+          backHeuristics[j] = heuristic * calculateDistance(planets[j].position, sourcePos);
         continue;
       }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
-      if (i != lastNodeIndex) nodeCosts[i][j] = initialCosts[i][j] = calculateCost(i, j);
-      else nodeCosts[i][j] = initialCosts[i][j] = INF;
-      if (j != lastNodeIndex) nodeCosts[j][i] = initialCosts[j][i] = calculateCost(j, i);
-      else
+      /*if (i != lastNodeIndex)*/ nodeCosts[i][j] = initialCosts[i][j] = calculateCost(i, j);
+      //else nodeCosts[i][j] = initialCosts[i][j] = INF;
+      /*if (j != lastNodeIndex)*/ nodeCosts[j][i] = initialCosts[j][i] = calculateCost(j, i);
+
+      // A* heuristic for each node
+      if (j == lastNodeIndex)
       {
-        nodeCosts[j][i] = initialCosts[j][i] = INF;
-        heuristics[i] = heuristic * distance; // Use Euclidian distance to target as A* heuristic for each node
+        //nodeCosts[j][i] = initialCosts[j][i] = INF;
+        heuristics[i] = heuristic * distance; // Use Euclidian distance to target as heuristic for forward search
       }
+      if (i == 0)
+        backHeuristics[j] = heuristic * distance; // Use Euclidian distance to source as heuristic for backward search
     }
     nodeCosts[i][i] = initialCosts[i][i] = INF;
   }
+  /*for (int i = 0; i < nodeCount; i++)
+  {
+    for (int j = 0; j < nodeCount; j++)
+    {
+      cout << i << " to " << j << ": " << initialCosts[i][j] << endl;
+    }
+  }*/
 }
 
 /*// Implements modified Bellman-Ford algorithm to find approximate best path
@@ -647,7 +660,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
   // Priority queue of <cost, index> to pick most promising (least cost) node
   priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
   pq.emplace(0, source);
-  vector<bool> visited = vector<bool>(nodeCount);
+  vector<bool> visited(nodeCount);
   while (!pq.empty())
   {
     int node1 = pq.top().second;
@@ -655,7 +668,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
     if (visited[node1])
       continue;
     visited[node1] = true;
-    if (node1 == sink) // Reached target
+    if (node1 == sink) // Reached target CHECK - should I use this in bidirectional
       break;
     
     double minCost = nodes[node1].minCost;
@@ -693,6 +706,132 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
   return 0;
 }
 
+// Implements modified A* algorithm with bidirectional search to find single best-path from source to sink node
+int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
+{
+  // Forward and backward priority queues of <cost, index> to pick most promising (least cost) node
+  priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pqF, pqB;
+  pqF.emplace(0, source);
+  pqB.emplace(0, sink);
+  // Forward and backward g-scores (costs), initialized pre-relaxed to infinity
+  vector<double> gF(nodeCount, INF), gB(nodeCount, INF);
+  gF[source] = gB[sink] = 0; // Set distance to forward and backward search initial nodes (source and sink) to 0
+  vector<bool> visitedF(nodeCount, false), visitedB(nodeCount, false); // Visited nodes in forward and backward search
+  vector<int> parentsF(nodeCount, -1), parentsB(nodeCount, -1); // Parents of nodes in forward and backward search for path reconstruction
+
+  double bestCost = INF;
+  int meetingNode = -1;
+  while (!pqF.empty() && !pqB.empty())
+  {
+    pair<double, int> forwardPair = pqF.top(), backwardPair = pqB.top();
+    double costF = forwardPair.first, costB = backwardPair.first;
+    if (bestCost < INF)
+    {
+      // If sum of node costs exceeds best cost, end search
+      if (costF + costB >= bestCost)
+        break;
+    }
+
+    // Forward search
+    pqF.pop();
+    int node1 = forwardPair.second;
+    if (!visitedF[node1])
+    {
+      visitedF[node1] = true;
+      if (visitedB[node1])
+      {
+        // If node visited in both forward and backward search, check if it's the best meeting node
+        double newCost = gF[node1] + gB[node1];
+        if (newCost < bestCost)
+        {
+          bestCost = newCost;
+          meetingNode = node1;
+        }
+      }
+      double g1 = gF[node1];
+      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      {
+        double cost = nodeCosts[node1][node2];
+        if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
+          continue;
+        double newG = g1 + cost;
+        if (newG < gF[node2])
+        {
+          // Relax edge
+          gF[node2] = newG;
+          parentsF[node2] = node1;
+          pqF.emplace(newG + heuristics[node2], node2);
+        }
+      }
+    }
+
+    // Backward search
+    pqB.pop();
+    node1 = backwardPair.second;
+    if (!visitedB[node1])
+    {
+      visitedB[node1] = true;
+      if (visitedF[node1])
+      {
+        // If node visited in both forward and backward search, check if it's the best meeting node
+        double newCost = gF[node1] + gB[node1];
+        if (newCost < bestCost)
+        {
+          bestCost = newCost;
+          meetingNode = node1;
+        }
+      }
+      double g1 = gB[node1];
+      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      {
+        double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
+        if (cost == INF || visitedB[node2])
+          continue;
+        double newG = g1 + cost;
+        if (newG < gB[node2])
+        {
+          // Relax edge
+          gB[node2] = newG;
+          parentsB[node2] = node1;
+          pqB.emplace(newG + backHeuristics[node2], node2);
+        }
+      }
+    }
+  }
+
+  // Reconstruct path found by A* algorithm
+  if (meetingNode == -1)
+    return -1;
+  vector<int> leftPath, rightPath;
+  int node = meetingNode;
+  while (node != -1)
+  {
+    // Build left path before meeting node
+    leftPath.push_back(node);
+    if (node == source)
+      break;
+    node = parentsF[node];
+  }
+  if (leftPath.back() != source)
+    return -1; // Path didn't connect to source
+  reverse(leftPath.begin(), leftPath.end());
+  node = meetingNode;
+  while (node != -1 && node != sink)
+  {
+    // Build right path after meeting node
+    node = parentsB[node];
+    if (node != -1)
+      rightPath.push_back(node);
+  }
+  if (meetingNode != sink && (rightPath.empty() || rightPath.back() != sink)) // CHECK - meeting node is sink often
+    return -1; // Path didn't connect to sink
+  /*if (meetingNode == sink)
+    cout << "Meeting node is sink" << endl;*/
+  bestPath = leftPath;
+  bestPath.insert(bestPath.end(), rightPath.begin(), rightPath.end());
+  return bestPath.empty() ? -1 : 0;
+}
+
 void printPath(const string id, const vector<int> &path, const double score)
 {
   if (id.length() > 0)
@@ -706,9 +845,9 @@ void printPath(const string id, const vector<int> &path, const double score)
 int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
 {
   vector<int> bestPath;
-  if (aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
+  if ((useBidirection == 1)? bidirectionAStar(bestPath, 0, lastNodeIndex) : aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
   bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
-  printPath("Best", bestPath, 0);
+  //printPath("Best", bestPath, 0);
   vector<vector<int>> potentialPaths;
   for (int k = 1; k < pathCount; k++)
   {
@@ -731,7 +870,7 @@ int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
       }
 
       vector<int> spurPath;
-      int error = aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
+      int error = (useBidirection == 1)? bidirectionAStar(spurPath, spurNode, lastNodeIndex) : aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
       // Restore removed edges/nodes
       for (auto path : bestPaths)
       {
@@ -754,7 +893,7 @@ int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
       totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
       if (find(potentialPaths.begin(), potentialPaths.end(), totalPath) == potentialPaths.end())
       {
-        printPath("Potential - " + to_string(k), totalPath, 0);
+        //printPath("Potential - " + to_string(k), totalPath, 0);
         potentialPaths.push_back(totalPath); // If complete path not already in potential paths, add it
       }
     }
@@ -780,11 +919,11 @@ int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
         bestPathIndex = i;
       }
     }
-    cout << "Best path index: " << bestPathIndex << endl;
-    cout << "Best cost: " << bestCost << endl;
+    //cout << "Best path index: " << bestPathIndex << endl;
+    //cout << "Best cost: " << bestCost << endl;
     if (bestPathIndex >= 0) 
     {
-      printPath("Best - k=" + to_string(k) + ", i=" + to_string(bestPathIndex), potentialPaths[bestPathIndex], bestCost);
+      //printPath("Best - k=" + to_string(k) + ", i=" + to_string(bestPathIndex), potentialPaths[bestPathIndex], bestCost);
       bestPaths.push_back(potentialPaths[bestPathIndex]);
       potentialPaths.erase(potentialPaths.begin() + bestPathIndex); 
     }
@@ -795,39 +934,44 @@ int oldYens(vector<vector<int>> &bestPaths, const int pathCount)
 // Implements modified Yen's algorithm to find pathCount approximately-best paths
 int yens(vector<vector<int>> &bestPaths, int pathCount)
 {
-  vector<int> bestPath;
-  if (aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
+  vector<int> bestPath, sameRootPaths, rootPath, spurPath, totalPath;
+  if ((useBidirection == 1)? bidirectionAStar(bestPath, 0, lastNodeIndex) : aStar(bestPath, 0, lastNodeIndex) == -1) return -1;
   //printPath("Best", bestPath, 0);
   bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
   set<Path> potentialPaths; // Use set to avoid duplicates and automatic sorting
   for (int k = 1; k < pathCount; k++)
   {
-    vector<int> lastBestPath = bestPaths.back();
+    vector<int> &lastBestPath = bestPaths.back();
     int n = lastBestPath.size() - 1;
     for (int i = 0; i < n; i++)
     {
-      int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
-      vector<int> rootPath(lastBestPath.begin(), lastBestPath.begin() + i + 1); // Sequence of nodes from source to spur node
-      for (auto path : bestPaths)
+      rootPath.assign(lastBestPath.begin(), lastBestPath.begin() + i + 1); // Sequence of nodes from source to spur node
+      sameRootPaths.clear(); // Store paths with removed edges to speed up restoring
+      int bestPathsCount = bestPaths.size();
+      for (int j = 0; j < bestPathsCount; j++)
       {
-        vector<int> segment(path.begin(), path.begin() + i + 1);
-        if (rootPath == segment)
-          nodeCosts[path[i]][path[i+1]] = INF; // Remove links from spur nodes of other paths sharing same same root to prevent duplicate paths
+        vector<int> &path = bestPaths[j];
+        if (rootPath.size() <= path.size() && equal(rootPath.begin(), rootPath.end(), path.begin()))
+        {
+          sameRootPaths.push_back(j);
+          nodeCosts[path[i]][path[i+1]] = INF; // Remove edges from spur nodes of other paths sharing same same root to prevent duplicate paths
+        }
       }
       for (int j = 0; j < i; j++)
       {
         for (int m = 0; m < nodeCount; m++)
           nodeCosts[lastBestPath[j]][m] = nodeCosts[m][lastBestPath[j]] = INF; // Remove all nodes in root path from graph to prevent cycles
       }
+      int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
+      spurPath.clear();
+      int error = (useBidirection == 1)? bidirectionAStar(spurPath, spurNode, lastNodeIndex) : aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
 
-      vector<int> spurPath;
-      int error = aStar(spurPath, spurNode, lastNodeIndex); // Calculate spur path from spur node to sink
       // Restore removed edges/nodes
-      for (auto path : bestPaths)
+      int sameRootCount = sameRootPaths.size();
+      for (int j = 0; j < sameRootCount; j++)
       {
-        vector<int> segment(path.begin(), path.begin() + i + 1);
-        if (rootPath == segment)
-          nodeCosts[path[i]][path[i+1]] = initialCosts[path[i]][path[i+1]];
+        vector<int> &path = bestPaths[sameRootPaths[j]];
+        nodeCosts[path[i]][path[i+1]] = initialCosts[path[i]][path[i+1]];
       }
       for (int j = 0; j < i; j++)
       {
@@ -840,7 +984,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 
       if (error == -1)
         continue;
-      vector<int> totalPath = rootPath;
+      totalPath = rootPath;
       totalPath.insert(totalPath.end(), spurPath.begin() + 1, spurPath.end()); // Combine root and spur path into complete path
       int pathLength = totalPath.size();
       double cost = 0;
@@ -961,7 +1105,7 @@ int optimizeSpeed(double &v1, double &v2, double &score, int i0, int im, int i1,
   int i;
   double fuel0 = fuel[i0 - 1], oxygen0 = oxygen[i0 - 1], food0 = food[i0 - 1];
   int ni = i1 - i0 + 2;
-  vector<double> cs = vector<double>(ni), ci = vector<double>(ni);
+  vector<double> cs(ni), ci(ni);
   cs[0] = 0.0;
   ci[0] = 0.0;
   double dx = 0.0, dy = 0.0, sx = 0.0, sy = 0.0;
@@ -1175,7 +1319,7 @@ int optimizePath(vector<int> &path, vector<double> &speeds, vector<double> &fuel
   int error = 0;
   bool foundOxygenResupply = false, foundFoodResupply = false;
   int pathLength = path.size();
-  vector<double> mb = vector<double>(pathLength);
+  vector<double> mb(pathLength);
   
   // Method 1: set ideal speed by disregard both, one, or none of the kl terms if node is before both, one or none of the resupplies
   for (int i = pathLength - 1; i >= 1; i--)
@@ -1825,6 +1969,8 @@ int main(int argc, char *argv[])
     {"oxygen", required_argument, 0, 'o'},
     {"food", required_argument, 0, 'd'},
     {"maxPaths", required_argument, 0, 's'}, // Max number of best paths to generate
+    {"pathFactor", required_argument, 0, 'g'}, // nodeCount * pathFactor = paths to generate, capped at maxPaths
+    {"bidirection", required_argument, 0, 'b'}, // Use bidirectional A* search
     {"test", required_argument, 0, 't'}, // Test path
     {"scank", required_argument, 0, 'k'}, // Scan for best slope during speed optimization
     {"ideal", required_argument, 0, 'e'}, // Use precalculated ideal speeds
@@ -1837,7 +1983,7 @@ int main(int argc, char *argv[])
     {"oldYens", required_argument, 0, 'y'}, // Use old Yens algorithm
     {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:f:o:d:s:t:k:e:n:r:p:q:w:l", long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:f:o:d:s:g:b:t:k:e:n:r:p:q:w:l", long_options, &index)) != -1)
   {
     switch (opt)
     {
@@ -1855,6 +2001,12 @@ int main(int argc, char *argv[])
         break;
       case 's':
         maxPaths = atoi(optarg);
+        break;
+      case 'g':
+        pathFactor = atoi(optarg);
+        break;
+      case 'b':
+        useBidirection = atoi(optarg);
         break;
       case 't':
         testMode = atoi(optarg);
@@ -1927,9 +2079,9 @@ int main(int argc, char *argv[])
   long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
   cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
   vector<vector<int>> bestPaths;
-  int pathCount = maxPaths * nodeCount;
-  if (pathCount > 1000) pathCount = 1000;
-  else if (pathCount < 25) pathCount = 25;
+  int pathCount = pathFactor * nodeCount;
+  if (pathCount > maxPaths) pathCount = maxPaths;
+  else if (pathCount < 50) pathCount = 50;
   if (useOldYens == 1)
   {
     if (oldYens(bestPaths, pathCount) == -1)
