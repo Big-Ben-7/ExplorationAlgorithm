@@ -31,7 +31,7 @@ int idealCheck = 1;
 int nproc = 0;
 int maxPaths = 2000;
 int pathFactor = 5;
-int useBidirection = 1;
+int useBidirection = 0;
 int useOldYens = 0;
 int skipM1 = 0;
 int skipM2 = 0;
@@ -170,7 +170,8 @@ chrono::steady_clock::time_point startTime;
 vector<double> heuristics, backHeuristics;
 vector<PlanetData> planets;
 int nodeCount, lastNodeIndex;
-// 3 adjacency matrix structure used to efficiently represent graph, containing distance, initial cost, and cost between two node indices
+
+// 3 adjacency matrix structures used to efficiently represent graph, containing distance, initial cost, and cost between two node indices
 vector<vector<double>> nodeCosts;
 vector<vector<double>> nodeDistances;
 vector<vector<double>> initialCosts; // Used in Yen's algorithm when restoring removed edges/nodes
@@ -535,7 +536,7 @@ void initializeLists()
 {
   // Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
-  heuristics = vector<double>(nodeCount), backHeuristics = vector<double>(nodeCount);
+  heuristics = vector<double>(nodeCount, 0), backHeuristics = vector<double>(nodeCount, 0);
   Point sourcePos = planets[0].position, sinkPos = planets[lastNodeIndex].position;
   nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
@@ -543,11 +544,10 @@ void initializeLists()
   for (int i = 0; i < nodeCount; i++)
   {
     double hostileRadius = planets[i].hostileRadius;
-    // Fills adjacency list with list of nodes connected to each node
     for (int j = i + 1; j < nodeCount; j++)
     {
       // Eliminate edges crossing hostile radius
-      if (hostileRadius != 0 || edgeInHostileRadius(i, j))
+      if (hostileRadius != 0 || planets[j].hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
         //nodeDistances[i][j] = nodeDistances[j][i] = INF;
         nodeCosts[i][j] = initialCosts[i][j] = nodeCosts[j][i] = initialCosts[j][i] = INF;
@@ -580,6 +580,10 @@ void initializeLists()
       cout << i << " to " << j << ": " << initialCosts[i][j] << endl;
     }
   }*/
+ /*for (int i = 0; i < nodeCount; i++)
+ {
+  cout << i << ": " << heuristics[i] << ", " << backHeuristics[i] << endl;;
+ }*/
 }
 
 /*// Implements modified Bellman-Ford algorithm to find approximate best path
@@ -668,7 +672,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
     if (visited[node1])
       continue;
     visited[node1] = true;
-    if (node1 == sink) // Reached target CHECK - should I use this in bidirectional
+    if (node1 == sink) // Reached target
       break;
     
     double minCost = nodes[node1].minCost;
@@ -725,75 +729,105 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   {
     pair<double, int> forwardPair = pqF.top(), backwardPair = pqB.top();
     double costF = forwardPair.first, costB = backwardPair.first;
+    //cout << "Forward: " << costF << ", Backward: " << costB << "; ";
     if (bestCost < INF)
     {
-      // If sum of node costs exceeds best cost, end search
-      if (costF + costB >= bestCost)
+      // Conservative termination (both frontiers beat current best)
+      if (costF >= bestCost && costB >= bestCost)
         break;
     }
-
-    // Forward search
-    pqF.pop();
-    int node1 = forwardPair.second;
-    if (!visitedF[node1])
+    
+    if (pqB.empty() || (!pqF.empty() && costF <= costB)) // Expand side with smaller frontier
     {
-      visitedF[node1] = true;
-      if (visitedB[node1])
+      // Forward search
+      pqF.pop();
+      int node1 = forwardPair.second;
+      if (!visitedF[node1])
       {
-        // If node visited in both forward and backward search, check if it's the best meeting node
-        double newCost = gF[node1] + gB[node1];
-        if (newCost < bestCost)
+        visitedF[node1] = true;
+        /*if (visitedB[node1])
         {
-          bestCost = newCost;
-          meetingNode = node1;
+          // If node visited in both forward and backward search, check if it's the best meeting node
+          double newCost = gF[node1] + gB[node1];
+          if (newCost < bestCost)
+          {
+            bestCost = newCost;
+            meetingNode = node1;
+            cout << "Forward intersection: " << node1 << ",  " << bestCost << endl;
+          }
         }
-      }
-      double g1 = gF[node1];
-      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
-      {
-        double cost = nodeCosts[node1][node2];
-        if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
-          continue;
-        double newG = g1 + cost;
-        if (newG < gF[node2])
+        if (node1 == sink) 
+          break; // CHECK - should I use this in bidirectional*/
+        double g1 = gF[node1];
+        for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
         {
-          // Relax edge
-          gF[node2] = newG;
-          parentsF[node2] = node1;
-          pqF.emplace(newG + heuristics[node2], node2);
+          double cost = nodeCosts[node1][node2];
+          if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
+            continue;
+          double newG = g1 + cost;
+          if (newG < gF[node2])
+          {
+            // Relax edge
+            gF[node2] = newG;
+            parentsF[node2] = node1;
+            pqF.emplace(newG + heuristics[node2], node2);
+            if (gB[node2] < INF)
+            {
+              double newCost = gF[node2] + gB[node2];
+              if (newCost < bestCost)
+              {
+                bestCost = newCost;
+                meetingNode = node2;
+              }
+            }
+          }
         }
       }
     }
-
-    // Backward search
-    pqB.pop();
-    node1 = backwardPair.second;
-    if (!visitedB[node1])
+    else
     {
-      visitedB[node1] = true;
-      if (visitedF[node1])
+      // Backward search
+      pqB.pop();
+      int node1 = backwardPair.second;
+      if (!visitedB[node1])
       {
-        // If node visited in both forward and backward search, check if it's the best meeting node
-        double newCost = gF[node1] + gB[node1];
-        if (newCost < bestCost)
+        visitedB[node1] = true;
+        /*if (visitedF[node1])
         {
-          bestCost = newCost;
-          meetingNode = node1;
+          // If node visited in both forward and backward search, check if it's the best meeting node
+          double newCost = gF[node1] + gB[node1];
+          if (newCost < bestCost)
+          {
+            bestCost = newCost;
+            meetingNode = node1;
+            cout << "Back intersection: " << node1 << ",  " << bestCost << endl;
+          }
         }
-      }
-      double g1 = gB[node1];
-      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
-      {
-        double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
-        if (cost == INF || visitedB[node2])
-          continue;
-        double newG = g1 + cost;
-        if (newG < gB[node2])
+        if (node1 == source) 
+          break; // CHECK - should I use this in bidirectional*/
+        double g1 = gB[node1];
+        for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
         {
-          // Relax edge
-          gB[node2] = newG;
-          parentsB[node2] = node1;
-          pqB.emplace(newG + backHeuristics[node2], node2);
+          double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
+          if (cost == INF || visitedB[node2])
+            continue;
+          double newG = g1 + cost;
+          if (newG < gB[node2])
+          {
+            // Relax edge
+            gB[node2] = newG;
+            parentsB[node2] = node1;
+            pqB.emplace(newG + backHeuristics[node2], node2);
+            if (gF[node2] < INF)
+            {
+              double newCost = gF[node2] + gB[node2];
+              if (newCost < bestCost)
+              {
+                bestCost = newCost;
+                meetingNode = node2;
+              }
+            }
+          }
         }
       }
     }
@@ -802,6 +836,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   // Reconstruct path found by A* algorithm
   if (meetingNode == -1)
     return -1;
+  //cout << "Meeting node: " << meetingNode << endl;
   vector<int> leftPath, rightPath;
   int node = meetingNode;
   while (node != -1)
