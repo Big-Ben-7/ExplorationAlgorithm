@@ -770,7 +770,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
             // Relax edge
             gF[node2] = newG;
             parentsF[node2] = node1;
-            pqF.emplace(newG + heuristics[node2], node2);
+            pqF.emplace(newG /*+ heuristics[node2]*/, node2); // CHECK - removing heuristic makes faster somehow
             if (gB[node2] < INF)
             {
               double newCost = gF[node2] + gB[node2];
@@ -817,7 +817,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
             // Relax edge
             gB[node2] = newG;
             parentsB[node2] = node1;
-            pqB.emplace(newG + backHeuristics[node2], node2);
+            pqB.emplace(newG /*+ backHeuristics[node2]*/, node2); // CHECK - removing heuristic makes faster somehow
             if (gF[node2] < INF)
             {
               double newCost = gF[node2] + gB[node2];
