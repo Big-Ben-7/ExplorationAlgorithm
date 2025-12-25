@@ -31,7 +31,7 @@ int idealCheck = 1;
 int nproc = 0;
 int maxPaths = 2000;
 int pathFactor = 5;
-int useBidirection = 0;
+int useBidirection = 1;
 int useOldYens = 0;
 int skipM1 = 0;
 int skipM2 = 0;
@@ -178,6 +178,7 @@ vector<vector<double>> initialCosts; // Used in Yen's algorithm when restoring r
 //vector<vector<ConnectedNode>> adjacencyList; // Adjacency list structure used to efficiently represent graph
 //vector<TreeNode *> possiblePaths;
 
+const double phi = (3 - sqrt(5)) / 2; // Golden section ratio
 const double kf = DEF_KF;
 const double kl = DEF_KL;
 // Speed optimization by first derivative test
@@ -276,7 +277,7 @@ bool edgeInHostileRadius(const int startNode, const int endNode)
   return false;
 }
 // Returns cost (time + resource consumption) of edge connecting two nodes
-double calculateCost(int node1, int node2)
+double calculateCost(const int node1, const int node2)
 {
   double d = nodeDistances[node1][node2];
   double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
@@ -301,6 +302,182 @@ double calculateCost(int node1, int node2)
   return t + fuelConsumed + oxygenConsumed + foodConsumed;
 }
 
+// Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find minimum of func in [a, b]
+double findMinimum(double a, double b, double (*func)(const double), const double tolerance = 1e-6)
+{
+  // Initialize bracketing points
+  double x = a + phi * (b - a), fx = func(x); // x is current best minimum
+  double w = x, fw = fx; // w is previous best point
+  double v = x, fv = fx; // v is previous of previous best point
+  double d = 0.0; // Current step
+  double e = 0.0; // Distance moved from previous step
+    
+  for (int iter = 0; iter < 500; iter++)
+  {
+    double midpoint = 0.5 * (a + b);
+    double tol1 = tolerance * fabs(x);
+    double tol2 = 2.0 * tol1;
+    
+    // Stop when interval sufficiently small
+    if (fabs(x - midpoint) <= (tol2 - 0.5 * (b - a)))
+      return x;
+    
+    // Try parabolic interpolation
+    if (fabs(e) > tol1)
+    {
+      // Fit parabola through (w, fw), (x, fx), (v, fv)
+      double r = (x - w) * (fx - fv);
+      double q = (x - v) * (fx - fw);
+      double p = (x - v) * q - (x - w) * r;
+      q = 2.0 * (q - r);
+      q > 0.0 ? p = -p : q = -q;
+      
+      // Check if parabolic step is acceptable
+      if (fabs(p) < fabs(0.5 * q * e) && p > q * (a - x) && p < q * (b - x))
+      {
+        // Take parabolic step
+        d = p / q;
+        double u = x + d;
+        
+        // f must not be evaluated too close to a or b
+        if ((u - a) < tol2 || (b - u) < tol2)
+          d = (x < midpoint) ? tol1 : -tol1;
+      }
+      else
+      {
+        // Fall back to golden section search
+        e = (x >= midpoint) ? (a - x) : (b - x);
+        d = phi * e;
+      }
+    }
+    else
+    {
+      // Fall back to Golden section search
+      e = (x >= midpoint) ? (a - x) : (b - x);
+      d = phi * e;
+    }
+    
+    // Evaluate function at new point
+    double u = (fabs(d) >= tol1) ? (x + d) : (x + ((d > 0.0) ? tol1 : -tol1));
+    double fu = func(u);
+    
+    // Update bracketing triplet
+    if (fu <= fx)
+    {
+      u >= x ? a = x : b = x;
+      v = w, fv = fw;
+      w = x, fw = fx;
+      x = u, fx = fu;
+    }
+    else
+    {
+      u < x ? a = u : b = u;
+      if (fu <= fw || w == x)
+      {
+        v = w, fv = fw;
+        w = u, fw = fu;
+      }
+      else if (fu <= fv || v == x || v == w)
+      {
+        v = u;
+        fv = fu;
+      }
+    }
+  }
+  return x;
+}
+
+// Brent's root-finding method for functions f(x, x0, y0)
+double findRoot(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
+{
+  double fa = func(a, x0, y0);
+  double fb = func(b, x0, y0);
+
+  double c = a;
+  double fc = fa;
+  bool mflag = true;
+  double s = b;
+  double d = 0.0;
+
+  for (int iter = 0; iter < 100; ++iter)
+  {
+    // If fb is (numerically) a root
+    if (fabs(fb) < tolerance)
+      return b;
+
+    // Make sure that |fb| <= |fa|
+    if (fabs(fa) < fabs(fb))
+    {
+      swap(a, b);
+      swap(fa, fb);
+    }
+
+    // Convergence test
+    double tol1 = 2.0 * EPSILON * fabs(b) + 0.5 * tolerance;
+    double m = 0.5 * (a - b); // note: m is midpoint of [b,a]
+    if (fabs(m) <= tol1 || fabs(fb) < tolerance)
+      return b;
+
+    // Attempt interpolation
+    if (fa != fc && fb != fc)
+    {
+      // Inverse quadratic interpolation
+      s = (a * fb * fc) / ((fa - fb) * (fa - fc))
+        + (b * fa * fc) / ((fb - fa) * (fb - fc))
+        + (c * fa * fb) / ((fc - fa) * (fc - fb));
+    }
+    else
+    {
+      // Secant method
+      s = b - fb * (b - a) / (fb - fa);
+    }
+
+    // Conditions to use bisection instead
+    double cond1 = (s < (3.0 * a + b) / 4.0) || (s > b);
+    double cond2 = mflag && (fabs(s - b) >= fabs(b - c) / 2.0);
+    double cond3 = !mflag && (fabs(s - b) >= fabs(c - d) / 2.0);
+    double cond4 = mflag && (fabs(b - c) < tol1);
+    double cond5 = !mflag && (fabs(c - d) < tol1);
+
+    if (cond1 || cond2 || cond3 || cond4 || cond5)
+    {
+      // Bisection
+      s = 0.5 * (a + b);
+      mflag = true;
+    }
+    else
+    {
+      mflag = false;
+    }
+
+    double fs = func(s, x0, y0);
+
+    // Shift variables for next iteration
+    d = c;
+    c = b;
+    fc = fb;
+
+    if (fa * fs < 0.0)
+    {
+      b = s;
+      fb = fs;
+    }
+    else
+    {
+      a = s;
+      fa = fs;
+    }
+
+    // Ensure |fb| <= |fa|
+    if (fabs(fa) < fabs(fb))
+    {
+      swap(a, b);
+      swap(fa, fb);
+    }
+  }
+
+  return b;
+}
 // Bisection algorithm to determine roots of a function (used in speed optimization)
 double bisection(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
@@ -313,7 +490,7 @@ double bisection(double a, double b, const double x0, const double y0, double (*
   {
     double fc = func(c, x0, y0);
     if (fabs(fc) < accuracy)
-      return c;
+      break;
     if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0))
     {
       a = c;
@@ -328,15 +505,15 @@ double bisection(double a, double b, const double x0, const double y0, double (*
   }
   return c;
 }
-double derivFunc(const double theta, const double x0, const double y0)
-{
-  double cosTheta = cos(theta), sinTheta = sin(theta);
-  return x0 * cosTheta - y0 * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
-}
 double func(const double theta, const double x0, const double y0)
 {
   double cosTheta = cos(theta), sinTheta = sin(theta);
   return x0 * sinTheta + y0 * cosTheta - sinTheta * cosTheta;
+}
+double derivFunc(const double theta, const double x0, const double y0)
+{
+  double cosTheta = cos(theta), sinTheta = sin(theta);
+  return x0 * cosTheta - y0 * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
 }
 
 // Extracts data from inputted CSV map with error handling
@@ -727,105 +904,96 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   int meetingNode = -1;
   while (!pqF.empty() && !pqB.empty())
   {
-    pair<double, int> forwardPair = pqF.top(), backwardPair = pqB.top();
+    const pair<double, int> &forwardPair = pqF.top(), backwardPair = pqB.top();
     double costF = forwardPair.first, costB = backwardPair.first;
     //cout << "Forward: " << costF << ", Backward: " << costB << "; ";
     if (bestCost < INF)
     {
-      // Conservative termination (both frontiers beat current best)
-      if (costF >= bestCost && costB >= bestCost)
+      if (costF + costB >= bestCost)
         break;
     }
-    
-    if (pqB.empty() || (!pqF.empty() && costF <= costB)) // Expand side with smaller frontier
+    // Forward search
+    pqF.pop();
+    int node1 = forwardPair.second;
+    if (!visitedF[node1])
     {
-      // Forward search
-      pqF.pop();
-      int node1 = forwardPair.second;
-      if (!visitedF[node1])
+      visitedF[node1] = true;
+      /*if (visitedB[node1])
       {
-        visitedF[node1] = true;
-        /*if (visitedB[node1])
+        // If node visited in both forward and backward search, check if it's the best meeting node
+        double newCost = gF[node1] + gB[node1];
+        if (newCost < bestCost)
         {
-          // If node visited in both forward and backward search, check if it's the best meeting node
-          double newCost = gF[node1] + gB[node1];
-          if (newCost < bestCost)
-          {
-            bestCost = newCost;
-            meetingNode = node1;
-            cout << "Forward intersection: " << node1 << ",  " << bestCost << endl;
-          }
+          bestCost = newCost;
+          meetingNode = node1;
+          cout << "Forward intersection: " << node1 << ",  " << bestCost << endl;
         }
-        if (node1 == sink) 
-          break; // CHECK - should I use this in bidirectional*/
-        double g1 = gF[node1];
-        for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      }
+      if (node1 == sink) 
+        break; // CHECK - should I use this in bidirectional*/
+      double g1 = gF[node1];
+      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      {
+        double cost = nodeCosts[node1][node2];
+        if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
+          continue;
+        double newG = g1 + cost;
+        if (newG < gF[node2])
         {
-          double cost = nodeCosts[node1][node2];
-          if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
-            continue;
-          double newG = g1 + cost;
-          if (newG < gF[node2])
+          // Relax edge
+          gF[node2] = newG;
+          parentsF[node2] = node1;
+          pqF.emplace(newG + heuristics[node2], node2);
+          if (gB[node2] < INF)
           {
-            // Relax edge
-            gF[node2] = newG;
-            parentsF[node2] = node1;
-            pqF.emplace(newG /*+ heuristics[node2]*/, node2); // CHECK - removing heuristic makes faster somehow
-            if (gB[node2] < INF)
+            double newCost = gF[node2] + gB[node2];
+            if (newCost < bestCost)
             {
-              double newCost = gF[node2] + gB[node2];
-              if (newCost < bestCost)
-              {
-                bestCost = newCost;
-                meetingNode = node2;
-              }
+              bestCost = newCost;
+              meetingNode = node2;
             }
           }
         }
       }
     }
-    else
+    // Backward search
+    pqB.pop();
+    node1 = backwardPair.second;
+    if (!visitedB[node1])
     {
-      // Backward search
-      pqB.pop();
-      int node1 = backwardPair.second;
-      if (!visitedB[node1])
+      visitedB[node1] = true;
+      /*if (visitedF[node1])
       {
-        visitedB[node1] = true;
-        /*if (visitedF[node1])
+        // If node visited in both forward and backward search, check if it's the best meeting node
+        double newCost = gF[node1] + gB[node1];
+        if (newCost < bestCost)
         {
-          // If node visited in both forward and backward search, check if it's the best meeting node
-          double newCost = gF[node1] + gB[node1];
-          if (newCost < bestCost)
-          {
-            bestCost = newCost;
-            meetingNode = node1;
-            cout << "Back intersection: " << node1 << ",  " << bestCost << endl;
-          }
+          bestCost = newCost;
+          meetingNode = node1;
         }
-        if (node1 == source) 
-          break; // CHECK - should I use this in bidirectional*/
-        double g1 = gB[node1];
-        for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      }
+      if (node1 == source) 
+        break; // CHECK - should I use this in bidirectional*/
+      double g1 = gB[node1];
+      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      {
+        double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
+        if (cost == INF || visitedB[node2])
+          continue;
+        double newG = g1 + cost;
+        if (newG < gB[node2])
         {
-          double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
-          if (cost == INF || visitedB[node2])
-            continue;
-          double newG = g1 + cost;
-          if (newG < gB[node2])
+          // Relax edge
+          gB[node2] = newG;
+          parentsB[node2] = node1;
+          pqB.emplace(newG + backHeuristics[node2], node2);
+          if (gF[node2] < INF)
           {
-            // Relax edge
-            gB[node2] = newG;
-            parentsB[node2] = node1;
-            pqB.emplace(newG /*+ backHeuristics[node2]*/, node2); // CHECK - removing heuristic makes faster somehow
-            if (gF[node2] < INF)
+            double newCost = gF[node2] + gB[node2];
+            if (newCost < bestCost)
             {
-              double newCost = gF[node2] + gB[node2];
-              if (newCost < bestCost)
-              {
-                bestCost = newCost;
-                meetingNode = node2;
-              }
+              bestCost = newCost;
+              meetingNode = node2;
             }
           }
         }
@@ -2077,7 +2245,7 @@ int main(int argc, char *argv[])
         break;
     }
   }
-  
+
   cout << endl << "Welcome Mission Control!" << endl;
   if (fileName.empty())
   {
