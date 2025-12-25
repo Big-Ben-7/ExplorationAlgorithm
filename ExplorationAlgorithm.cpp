@@ -38,7 +38,7 @@ int skipM2 = 0;
 int skipM3 = 0;
 int skipSingle = 1;
 int skipOld = 1;
-int testMode = 0;
+int testMode = 1;
 string fileName = "";
 double maxFuel = DEF_MAX_FUEL;
 double maxOxygen = DEF_MAX_OXYGEN;
@@ -1979,7 +1979,7 @@ void testPath()
     printData(path, speeds, fuel, oxygen, food);
 }
 
-void oldTestPath()
+void rawTestPath()
 {
   string input, input2;
   cout << endl << "Path (Old): ";
@@ -2174,7 +2174,7 @@ int main(int argc, char *argv[])
     {"maxPaths", required_argument, 0, 's'}, // Max number of best paths to generate
     {"pathFactor", required_argument, 0, 'g'}, // nodeCount * pathFactor = paths to generate, capped at maxPaths
     {"bidirection", required_argument, 0, 'b'}, // Use bidirectional A* search
-    {"test", required_argument, 0, 't'}, // Test path
+    {"test", required_argument, 0, 't'}, // Test path and plot
     {"scank", required_argument, 0, 'k'}, // Scan for best slope during speed optimization
     {"ideal", required_argument, 0, 'e'}, // Use precalculated ideal speeds
     {"nproc", required_argument, 0, 'n'}, // Use n parallel processors
@@ -2351,10 +2351,66 @@ int main(int argc, char *argv[])
   double milliseconds = calcTime / 1000.0;
   cout << endl << "Calculation time: " << fixed << setprecision(4) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl << endl;
 
-  while (testMode > 0)
+  if (testMode > 0)
   {
-    oldTestPath();
-    testPath();
+    cout << endl;
+    cout << "x" << endl;
+    string xNone, yNone, xFood, yFood, xOxygen, yOxygen, xHostile, yHostile, rHostile, xEndpt, yEndpt;
+    for(int i = 0; i < planets.size(); i ++)
+    {
+      PlanetData planet = planets[i];
+      if (i == 0 || i == lastNodeIndex)
+      {
+        xEndpt += "," + to_string(planet.position.x);
+        yEndpt += "," + to_string(planet.position.y);
+        continue;
+      }
+      if (planet.hostileRadius > 0)
+      {
+        xHostile += "," + to_string(planet.position.x);
+        yHostile += "," + to_string(planet.position.y);
+        rHostile += "," + to_string(planet.hostileRadius);
+        continue;
+      }
+      switch(planet.resupply)
+      {
+        case NONE:
+          xNone += "," + to_string(planet.position.x);
+          yNone += "," + to_string(planet.position.y);
+          break;
+        case FOOD:
+          xFood += "," + to_string(planet.position.x);
+          yFood += "," + to_string(planet.position.y);
+          break;
+        case OXYGEN:
+          xOxygen += "," + to_string(planet.position.x);
+          yOxygen += "," + to_string(planet.position.y);
+          break;
+        default:
+          break;
+      }
+    }
+    cout << "xEndpt: " << xEndpt << endl;
+    cout << "yEndpt: " << yEndpt << endl;
+    cout << endl;
+    cout << "xNone: " << xNone << endl;
+    cout << "yNone: " << yNone << endl;
+    cout << endl;
+    cout << "xFood: " << xFood << endl;
+    cout << "yFood: " << yFood << endl;
+    cout << endl;
+    cout << "xOxygen: " << xOxygen << endl;
+    cout << "yOxygen: " << yOxygen << endl;
+    cout << endl;
+    cout << "xHostile: " << xHostile << endl;
+    cout << "yHostile: " << yHostile << endl;
+    cout << "rHostile: " << rHostile << endl;
+    
+    cout << endl;
+    while (testMode == 1)
+      rawTestPath();
+    while (testMode == 2)
+      testPath();
   }
 
   /*long long calcTime;
