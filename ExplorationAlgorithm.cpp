@@ -126,7 +126,7 @@ const double doubleResupplySpeed = 1 / cbrt(2 * kf);
 
 /************************************************************ Input ************************************************************/
 
-string toLower(string str)
+string toLower(const string &str)
 {
   string str2 = str;
   for (auto &c : str2)
@@ -134,7 +134,7 @@ string toLower(string str)
   return str2;
 }
 
-string trim(string str)
+string trim(const string &str)
 {
   string str2 = str;
   int i, j, l = str.length();
@@ -152,14 +152,13 @@ string trim(string str)
   return str2;
 }
 
-bool isValidPlanet(string planetName)
+bool isValidPlanet(const string &planetName)
 {
-  bool alphanumeric;
+  bool alphanumeric = false;
   for (auto &c : planetName)
   {
     if (isalnum(c))
     {
-      if (!alphanumeric)
         alphanumeric = true;
       continue;
     }
@@ -179,7 +178,7 @@ bool isValidPlanet(string planetName)
   return alphanumeric;
 }
 
-double calculateDistance(const Position pos1, const Position pos2)
+double calculateDistance(const Position &pos1, const Position &pos2)
 {
   double dx = pos2.x - pos1.x, dy = pos2.y - pos1.y;
   return sqrt(dx * dx + dy * dy);
@@ -429,7 +428,7 @@ int parseCSV()
 /************************************************************ Pathfinding ************************************************************/
 
 // Returns cost (time + resource consumption) of edge connecting two nodes
-double calculateCost(int node1, int node2)
+double calculateCost(const int node1, const int node2)
 {
   double d = nodeDistances[node1][node2];
   double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
@@ -722,7 +721,8 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 /************************************************************ Speed/Resource optimization ************************************************************/
 
 // Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
-double bisection(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
+double bisection(double a, double b, const double x0, const double y0, 
+                 double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double c;
   c = 0.5 * (a + b);
@@ -809,7 +809,7 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
 
 // Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find best speeds (see optimizeSpeed())
 int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
-                  double fuel0, double mvx, double mvy, vector<Boundary> &bs,
+                  const double fuel0, const double mvx, const double mvy, const vector<Boundary> &bs,
                   const double tolerance = 1e-6, const int maxIter = 500)
 {
   // Initialize bracketing points
@@ -918,8 +918,8 @@ int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, doub
 // Divides path into two segments: i0-1 to im and im to i1 (i0=im for our calls) and optimizes speed for i0-1 to im
 // Optimization is done by scaling ideal speeds for nodes in i0-1 to im by constant factor and for nodes in im to i1 by constant factor
 // Method 3 in OptimizePath() uses a loop to set each node to im and i0, thus eventually optimizing the entire path
-int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
-                  vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
+int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &path, const vector<double> &mb,
+                  vector<double> &speeds, const vector<double> &fuel, const vector<double> &oxygen, const vector<double> &food)
 {
   // Each constraint (fuel, food, oxygen) can be represented by a boundary curve on a graph that depends on the resupply type of each node
   // The area inside these boundaries is the solution space that will satisfy these constraints (resources never drop below 0)
@@ -1082,7 +1082,8 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
 }
 
 // Optimizes speed/resource usage on path with 3 methods (which increase in both robustness and computation time)
-int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
+int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel, 
+                 vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
   int error = 0;
   bool foundOxygenResupply = false, foundFoodResupply = false;
@@ -1341,7 +1342,8 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
 
 /************************************************************ Output ************************************************************/
 
-void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
+void printData(const vector<int> &path, const vector<double> &speeds, const vector<double> &fuel, const vector<double> &oxygen,
+               const vector<double> &food, const vector<double> &rawOxygen, const vector<double> &rawFood)
 {
   // Determine formatting width for each stat
   int pathLength = path.size();
