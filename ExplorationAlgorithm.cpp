@@ -5,6 +5,7 @@
 #include <vector>
 #include <queue>
 #include <string>
+#include <sstream>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -12,10 +13,6 @@
 #include <getopt.h>
 #include <array>
 #include <set>
-#ifdef _OPENMP
-#include <pthread.h>
-#include <omp.h>
-#endif
 using namespace std;
 
 #define kf 0.15
@@ -27,7 +24,6 @@ using namespace std;
 #define EPSILON std::numeric_limits<double>::epsilon()
 
 // Command line options
-int nproc = 0; //Test
 int maxPaths = 2000;
 int pathFactor = 5;
 double distanceScale = 1.0;
@@ -107,7 +103,6 @@ struct Boundary
   }
 };
 
-
 // 3 adjacency matrix structures used to efficiently represent graph
 vector<vector<double>> nodeCosts;
 vector<vector<double>> nodeDistances;
@@ -128,7 +123,6 @@ const double idealSpeed = cbrt((1 + 2 * kl) / (2 * kf));
 const double singleResupplySpeed = cbrt((1 + kl) / (2 * kf));
 // With both resupply type remaining, ideal speed can disregard consumption of both kl terms because both oxygen and food will be resupplied later
 const double doubleResupplySpeed = 1 / cbrt(2 * kf);
-
 
 /************************************************************ Input ************************************************************/
 
@@ -372,7 +366,7 @@ int parseCSV()
       longestNameLength = planetName.size();
     planets.emplace_back(planetName, x, y, resupplyEnum, hostileRadius);
   }
-  
+
   if (lineNumber < 3)
   {
     cout << "Error: There must be at least 2 planets in the map." << endl;
@@ -431,7 +425,6 @@ int parseCSV()
   iFile.close();
   return 0;
 }
-
 
 /************************************************************ Pathfinding ************************************************************/
 
@@ -726,51 +719,19 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
   return 0;
 }
 
-/*double calcData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
-{
-  int pathLength = path.size();
-  double score = 0.0;
-  double fuelLeft = MAX_FUEL, foodLeft = MAX_FOOD, oxygenLeft = MAX_OXYGEN;
-  for (int i = 1; i < pathLength; i++)
-  {
-    double speed = speeds[i];
-    int node = path[i];
-    double distance = nodeDistances[path[i - 1]][node];
-    double t = distance / speed, consumed = kl * t;
-    fuelLeft -= kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
-    switch (planets[node].resupply)
-    {
-    case OXYGEN:
-      oxygenLeft = MAX_OXYGEN;
-      break;
-    case FOOD:
-      foodLeft = MAX_FOOD;
-      break;
-    default:
-      break;
-    }
-    fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
-    score += t;
-  }
-  score -= fuel.back() + oxygen.back() + food.back();
-  return score;
-}*/
-
-
 /************************************************************ Speed/Resource optimization ************************************************************/
 
-// Bisection root-finding algorithm
+// Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
 double bisection(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double c;
   c = 0.5 * (a + b);
   double fa = func(a, x0, y0);
   double fb = func(b, x0, y0);
-  double accuracy = tolerance * 1e-3;
   while (fabs(b - a) > tolerance * c)
   {
     double fc = func(c, x0, y0);
-    if (fabs(fc) < accuracy)
+    if (fabs(fc) < tolerance)
       return c;
     if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0))
     {
@@ -1225,7 +1186,7 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     int node = path[i];
     double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = kl * t;
     foodLeft -= consumed, oxygenLeft -= consumed;
-    if (error == 0 && (oxygenLeft < 0.0001 || foodLeft < 0.0001))
+    if (error == 0 && (oxygenLeft < EPSILON || foodLeft < EPSILON))
       error = -1;
     rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
     fuelLeft -= kf * distance * speed * speed;
@@ -1244,12 +1205,12 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     score += t;
   }
   score -= fuel.back() + oxygen.back() + food.back();
-  if (error == 0 && fuelLeft >= 0.0001)
+  if (error == 0 && fuelLeft > EPSILON)
     return 0;
 
   // Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
   double totalFuelConsumed = MAX_FUEL - fuelLeft;
-  double speedFactor = sqrt((MAX_FUEL - 0.0001) / (totalFuelConsumed));
+  double speedFactor = sqrt(MAX_FUEL / totalFuelConsumed);
   fuelLeft = MAX_FUEL, oxygenLeft = MAX_OXYGEN, foodLeft = MAX_FOOD;
   error = 0;
   if (totalFuelConsumed >= MAX_FUEL)
@@ -1261,7 +1222,7 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
       speeds[i] *= speedFactor;
       double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = kl * t;
       fuelLeft -= kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
-      if (oxygenLeft < 0.0001 || foodLeft < 0.0001)
+      if (oxygenLeft < EPSILON || foodLeft < EPSILON)
       {
         error = -1;
         break;
@@ -1289,8 +1250,8 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     {
       int node = path[i];
       double distance = nodeDistances[path[i - 1]][node], speed = speeds[i];
-      double minOxygenSpeed = distance / ((oxygenLeft - 0.0001) / kl);
-      double minFoodSpeed = distance / ((foodLeft - 0.0001) / kl);
+      double minOxygenSpeed = distance / (oxygenLeft / kl);
+      double minFoodSpeed = distance / (foodLeft / kl);
       double minSpeed = max(minOxygenSpeed, minFoodSpeed), maxSpeed = speedFactor * speed;
       if (minSpeed > maxSpeed)
       {
@@ -1378,25 +1339,36 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     return -2;
 }
 
-
 /************************************************************ Output ************************************************************/
 
 void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
+  // Determine formatting width for each stat
   int pathLength = path.size();
-  int indexWidth = (int) log10(pathLength - 1) + 1;
-  if (longestNameLength < 4)
-    longestNameLength = 4;
-  string startPlanet = planets[0].name;
+  int indexWidth = (int)log10(pathLength - 1) + 1;
+  if (longestNameLength < 6)
+    longestNameLength = 6;
+  vector<string> speedStrings;
+  int longestSpeedLength = 0;
+  for (int i = 0; i < pathLength; i++)
+  {
+    stringstream ss;
+    ss << defaultfloat << setprecision(15) << speeds[i];
+    string speedString = ss.str();
+    speedStrings.push_back(speedString);
+    if (speedString.size() > longestSpeedLength)
+      longestSpeedLength = speedString.size();
+  }
+
+  // Print output
   cout << endl
        << endl
        << "PROGRAM OUTPUT" << endl;
   cout << "Map name: " << mapName << endl;
-  cout << "Path from: " << startPlanet << " to " << planets[lastNodeIndex].name << endl;
-  cout << "Planet travel order (excluding planet " << startPlanet << ") with speed to each planet: " << endl
+  cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl;
+  cout << "Note: Some values are in scientific notation for consistent formatting (e.g., 6.67e-02 = 6.67*10^(-2) = 0.0667)" << endl
        << endl;
-  cout << right << setw(5 + longestNameLength + indexWidth) << "Name |" << setw(14) << "Speed |" << setw(9) << "Dist |" << setw(9) << "Time |" << setw(9) << "Fuel |" << setw(7) << "Oxygen" << setw(8) << "Res. |" << setw(7) << "Food" << setw(8) << "Res. |" << setw(10) << "Score |" << endl;
-  cout << fixed;
+  cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(11) << "Distance |" << setw(11) << "Time |" << setw(11) << "Fuel |" << setw(9) << "Oxygen" << setw(8) << "Res. |" << setw(9) << "Food" << setw(8) << "Res. |" << setw(12) << "Score |" << endl;
   double travelTime = 0.0;
   double travelDistance = 0.0;
   for (int i = 1; i < pathLength; i++)
@@ -1411,10 +1383,10 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     switch (planet.resupply)
     {
     case OXYGEN:
-      o = to_string((int) MAX_OXYGEN);
+      o = to_string((int)MAX_OXYGEN);
       break;
     case FOOD:
-      fo = to_string((int) MAX_FOOD);
+      fo = to_string((int)MAX_FOOD);
       break;
     default:
       break;
@@ -1422,23 +1394,22 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
     if (edgeInHostileRadius(path[i - 1], node))
       cout << "Edge crosses hostile radius" << endl;
     cout << setw(indexWidth) << i << ")  "
-         << right
          << setw(longestNameLength) << planet.name << " | "
-         << setw(11) << setprecision(9) << v << " | "
-         << setw(6) << setprecision(1) << d << " | "
-         << setw(6) << travelTime << " | "
-         << setw(6) << fu << " | "
-         << setw(6) << rawOxygen[i] << "  "
+         << setw(longestSpeedLength) << defaultfloat << setprecision(15) << v << " | "
+         << setw(8) << scientific << setprecision(2) << d << " | " // Scientific notation for consistent formatting
+         << setw(8) << travelTime << " | "
+         << setw(8) << fu << " | "
+         << setw(8) << rawOxygen[i] << "  "
          << setw(4) << o << " | "
-         << setw(6) << rawFood[i] << "  "
+         << setw(8) << rawFood[i] << "  "
          << setw(4) << fo << " | "
-         << setw(7) << s << " |"
+         << setw(9) << s << " |"
          << endl;
   }
   cout << endl
        << "Final stats" << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
-  cout << "Total time: " << setprecision(3) << travelTime << endl;
+  cout << "Total time: " << defaultfloat << setprecision(12) << travelTime << endl;
   cout << "Total Distance: " << travelDistance << endl;
   cout << "Remaining fuel: " << fuelLeft << endl;
   cout << "Remaining oxygen: " << oxygenLeft << endl;
@@ -1450,7 +1421,8 @@ void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, 
 int testPath()
 {
   string input;
-  cout << endl << "Path: ";
+  cout << endl
+       << "Path: ";
   getline(cin, input);
   if (input.empty())
     return -1;
@@ -1490,7 +1462,8 @@ int testPath()
 int rawTestPath(string &xPath, string &yPath)
 {
   string input, input2;
-  cout << endl << "Path: ";
+  cout << endl
+       << "Path: ";
   getline(cin, input);
   if (input.empty())
     return -1;
@@ -1599,7 +1572,8 @@ int rawTestPath(string &xPath, string &yPath)
     }
     node0 = node;
   }
-  cout << endl << "Final stats: " << endl;
+  cout << endl
+       << "Final stats: " << endl;
   array<double, 3> lastNode = pathData[pathLength - 1];
   double fuelLeft = lastNode[0], oxygenLeft = lastNode[1], foodLeft = lastNode[2];
   cout << "Travel time: " << travelTime << endl;
@@ -1622,12 +1596,11 @@ int main(int argc, char *argv[])
   int opt, index;
   static struct option long_options[] =
   {
-      {"map", required_argument, 0, 'm'}, // Input map
-      {"maxPaths", required_argument, 0, 's'},    // Max number of best paths to generate with Yen's algorithm
-      {"pathFactor", required_argument, 0, 'g'},  // nodeCount * pathFactor = paths to generate, capped at maxPaths
-      {"test", required_argument, 0, 't'},        // Test mode (plots graph with Matplotlib, raw tests specific path)
-      {"nproc", required_argument, 0, 'n'},       // Use n parallel processors
-      {"distanceScale", required_argument, 0, 'c'},   // Scales all planet distances by constant factor distanceScale
+      {"map", required_argument, 0, 'm'},           // Input map
+      {"maxPaths", required_argument, 0, 's'},      // Max number of best paths to generate with Yen's algorithm
+      {"pathFactor", required_argument, 0, 'g'},    // nodeCount * pathFactor = paths to generate, capped at maxPaths
+      {"test", required_argument, 0, 't'},          // Test mode (plots graph with Matplotlib, raw tests specific path)
+      {"distanceScale", required_argument, 0, 'c'}, // Scales all planet distances by constant factor distanceScale
       {0, 0, 0, 0}
   };
   while ((opt = getopt_long(argc, argv, "m:", long_options, &index)) != -1)
@@ -1646,9 +1619,6 @@ int main(int argc, char *argv[])
     case 't':
       testMode = atoi(optarg);
       break;
-    case 'n':
-      nproc = atoi(optarg);
-      break;
     case 'c':
       distanceScale = atof(optarg);
       break;
@@ -1657,7 +1627,8 @@ int main(int argc, char *argv[])
     }
   }
 
-  cout << endl << "Welcome Mission Control!" << endl;
+  cout << endl
+       << "Welcome Mission Control!" << endl;
   if (fileName.empty())
   {
     cout << "Use these instructions to begin stress-testing:" << endl;
@@ -1669,12 +1640,6 @@ int main(int argc, char *argv[])
     cout << "If the map cannot be placed in the same folder, the full file path can be provided:" << endl;
     cout << "e.g., C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
   }
-
-#ifdef _OPENMP
-  if (nproc > 0)
-    omp_set_num_threads(nproc);
-  int np = omp_get_num_threads();
-#endif
 
   // Input and setup
   int error;
@@ -1737,7 +1702,7 @@ int main(int argc, char *argv[])
   long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
   double milliseconds = calcTime / 1000.0;
   cout << endl
-       << "Calculation time: " << fixed << setprecision(4) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl
+       << "Calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl
        << endl;
 
   // Testing
@@ -1791,23 +1756,23 @@ int main(int argc, char *argv[])
     {
       outFile << xEndpt.substr(1) << endl;
       outFile << yEndpt.substr(1) << endl;
-      if (!xNone.empty()) 
+      if (!xNone.empty())
         outFile << xNone.substr(1) << endl;
-      if (!yNone.empty()) 
+      if (!yNone.empty())
         outFile << yNone.substr(1) << endl;
-      if (!xOxygen.empty()) 
+      if (!xOxygen.empty())
         outFile << xOxygen.substr(1) << endl;
-      if (!yOxygen.empty()) 
+      if (!yOxygen.empty())
         outFile << yOxygen.substr(1) << endl;
-      if (!xFood.empty()) 
+      if (!xFood.empty())
         outFile << xFood.substr(1) << endl;
-      if (!yFood.empty()) 
+      if (!yFood.empty())
         outFile << yFood.substr(1) << endl;
-      if (!xHostile.empty()) 
+      if (!xHostile.empty())
         outFile << xHostile.substr(1) << endl;
-      if (!yHostile.empty()) 
+      if (!yHostile.empty())
         outFile << yHostile.substr(1) << endl;
-      if (!rHostile.empty()) 
+      if (!rHostile.empty())
         outFile << rHostile.substr(1) << endl;
       if (validPath)
       {
