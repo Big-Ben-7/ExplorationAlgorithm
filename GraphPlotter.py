@@ -9,20 +9,38 @@ with open("PlotData.csv", mode='r', newline = '') as file:
         rowData = [float(element) for element in row]
         data.append(rowData)
 fig, ax = plt.subplots()
-plt.scatter(data[0], data[1], color='orange', label='endpts')
-plt.scatter(data[2], data[3], color='purple', label='normal')
-plt.scatter(data[4], data[5], color='blue', label='oxygen')
-plt.scatter(data[6], data[7], color='green', label='food')
-plt.scatter(data[8], data[9], color='red', label='hostile')
-for i in range(len(data[10])):
-    circle = Circle((data[8][i], data[9][i]), data[10][i], color='red', fill=False)
-    ax.add_patch(circle)
-testIndex = 13
+index = 0
+plt.scatter(data[index], data[index+1], color='orange', label='endpts')
+index += 2
 try:
-    plt.plot(data[11], data[12], linestyle='-', color='orange')
+    plt.scatter(data[index], data[index+1], color='purple', label='normal')
+    index += 2
 except:
-    testIndex = 11
-for i in range(testIndex, len(data)-1, 2):
+    pass
+try:
+    plt.scatter(data[index], data[index+1], color='blue', label='oxygen')
+    index += 2
+except:
+    pass
+try:
+    plt.scatter(data[index], data[index+1], color='green', label='food')
+    index += 2
+except:
+    pass
+try:
+    plt.scatter(data[index], data[index+1], color='red', label='hostile')
+    for i in range(len(data[index])):
+        circle = Circle((data[index][i], data[index+1][i]), data[index+2][i], color='red', fill=False)
+        ax.add_patch(circle)
+    index += 3
+except:
+    pass
+try:
+    plt.plot(data[index], data[index+1], linestyle='-', color='orange')
+    index += 2
+except:
+    pass
+for i in range(index, len(data)-1, 2):
     plt.plot(data[i], data[i+1], linestyle='-', color='black')
 ax.set_aspect('equal', 'box')
 plt.title('Data')
