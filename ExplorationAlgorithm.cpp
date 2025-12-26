@@ -103,7 +103,8 @@ struct Boundary
   }
 };
 
-// 3 adjacency matrix structures used to efficiently represent graph
+// Adjacency list and 3 adjacency matrix structures used to efficiently represent graph
+vector<vector<int>> neighbors; // Contains list of adjacent nodes for each node
 vector<vector<double>> nodeCosts;
 vector<vector<double>> nodeDistances;
 vector<vector<double>> initialCosts; // Stores initial cost between two node indices to restore changes to nodeCosts in Yen's algorithm
@@ -490,6 +491,7 @@ void initializeLists()
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
   hF = vector<double>(nodeCount, 0), hB = vector<double>(nodeCount, 0);
   Position sourcePos = planets[0].position, sinkPos = planets[lastNodeIndex].position;
+  neighbors = vector<vector<int>>(nodeCount);
   nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   initialCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
@@ -509,6 +511,8 @@ void initializeLists()
         continue;
       }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
+      neighbors[i].push_back(j);
+      neighbors[j].push_back(i);
       nodeCosts[i][j] = initialCosts[i][j] = calculateCost(i, j);
       nodeCosts[j][i] = initialCosts[j][i] = calculateCost(j, i);
 
@@ -555,7 +559,8 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     {
       visitedF[node1] = true;
       double g1 = gF[node1];
-      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      vector<int> &nodeNeighbors = neighbors[node1];
+      for (int node2 : nodeNeighbors) // Iterate through adjacent nodes
       {
         double cost = nodeCosts[node1][node2];
         if (cost == INF || visitedF[node2])
@@ -586,7 +591,8 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     {
       visitedB[node1] = true;
       double g1 = gB[node1];
-      for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
+      vector<int> &nodeNeighbors = neighbors[node1];
+      for (int node2 : nodeNeighbors) // Iterate through adjacent nodes
       {
         double cost = nodeCosts[node2][node1];
         if (cost == INF || visitedB[node2])
