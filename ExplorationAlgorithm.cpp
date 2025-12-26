@@ -29,7 +29,7 @@ using namespace std;
 // Command line option input
 double slopeDA = 0.2;
 int scanSlope = 51;
-int idealCheck = 1;
+int idealCheck = 0;
 int nproc = 0;
 int maxPaths = 2000;
 int pathFactor = 5;
@@ -91,37 +91,6 @@ struct PlanetData
     name = n, position = Point(x, y), resupply = r, hostileRadius = h;
   }
 };
-/*struct Edge
-{
-  int node1, node2;
-  double distance;
-  Edge(int n1, int n2, double d)
-  {
-    node1 = n1, node2 = n2, distance = d;
-  }
-  bool operator<(const Edge &other) const
-  {
-    int other1 = other.node1;
-    if (node1 == other1)
-      return node2 < other.node2;
-    else
-      return node1 < other1;
-  }
-};*/
-/*struct GraphNode
-{
-  int nodeIndex;
-  double cost;
-  GraphNode(int n, double c)
-  {
-    nodeIndex = n;
-    cost = c;
-  }
-  bool operator<(const ConnectedNode &other) const
-  {
-    return nodeIndex < other.nodeIndex;
-  }
-};*/
 struct NodeData
 {
   double minCost;
@@ -132,20 +101,6 @@ struct NodeData
     previousNode = -1;
   }
 };
-/*// Represents one node in a node tree
-struct TreeNode
-{
-  int nodeIndex;
-  TreeNode *parent;
-  double cost;
-  vector<TreeNode *> children;
-  TreeNode(int i, TreeNode *p, double c)
-  {
-    nodeIndex = i;
-    parent = p;
-    cost = c;
-  }
-};*/
 struct BestSlope
 {
   int index;
@@ -176,7 +131,7 @@ struct Path
 };
 
 chrono::steady_clock::time_point startTime;
-vector<double> heuristics, backHeuristics;
+vector<double> hF, hB; // Heuristics for forward and backward search in pathfinding
 vector<PlanetData> planets;
 int nodeCount, lastNodeIndex;
 
@@ -184,8 +139,6 @@ int nodeCount, lastNodeIndex;
 vector<vector<double>> nodeCosts;
 vector<vector<double>> nodeDistances;
 vector<vector<double>> initialCosts; // Used in Yen's algorithm when restoring removed edges/nodes
-// vector<vector<ConnectedNode>> adjacencyList; // Adjacency list structure used to efficiently represent graph
-// vector<TreeNode *> possiblePaths;
 
 const double phi = (3 - sqrt(5)) / 2; // Golden section ratio
 const double kf = DEF_KF;
@@ -195,11 +148,11 @@ const double kl = DEF_KL;
 // c'(x) = -d/v^2 + 2*kf*d*v - kl*d/v^2 - kl*d/v^2 = (-d + 2*kf*d*v^3 - kl*d - kl*d)/v^2
 // Cost minimized at c'(x) = 0 => -d + 2*kf*d*v^3 - kl*d - kl*d = 0 => v = cbrt((1 + kl+kl) / (2*kf))
 const double idealSpeed = cbrt((1 + 2 * kl) / (2 * kf));
-// Ideal speed disregarding consumption of one kl term (one resupply remaining in path)
-const double singleResupplySpeed = cbrt((1 + kl) / (2 * kf));
-// Ideal speed disregarding consumption of both kl terms (both resupply types remaining)
-const double doubleResupplySpeed = 1 / cbrt(2 * kf);
+const double singleResupplySpeed = cbrt((1 + kl) / (2 * kf)); // Ideal speed disregarding consumption of one kl term (one resupply remaining in path)
+const double doubleResupplySpeed = 1 / cbrt(2 * kf);          // Ideal speed disregarding consumption of both kl terms (both resupply types remaining)
 string mapName;
+
+/****************************************************************** Input ******************************************************************/
 
 string toLower(string str)
 {
@@ -250,73 +203,11 @@ bool isValidPlanet(string planetName)
       return false;
     }
   }
-  // Planet names can't be all special characters!
+  // Planet names can't be all special characters
   return alphanumeric;
 }
 
-double calculateDistance(const Point pos1, const Point pos2)
-{
-  double dx = pos2.x - pos1.x, dy = pos2.y - pos1.y;
-  return sqrt(dx * dx + dy * dy);
-}
-
-bool edgeInHostileRadius(const int startNode, const int endNode)
-{
-  // Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
-  Point &start = planets[startNode].position, end = planets[endNode].position;
-  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
-  double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
-  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
-  double l = run * run + rise * rise;                                            // Length of line
-  for (auto &planet : planets)
-  {
-    if (planet.hostileRadius < EPSILON)
-      continue;
-    Point &center = planet.position;
-    // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
-    // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
-    double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
-    double discriminant = b * b - 4 * c;
-    // If discriminant < 0, no solution and edge does not cross hostile circle
-    if (discriminant < 0)
-      continue;
-    double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2; // Roots from quadratic formula
-    // If both values for d are lower or higher than edge length, hostile circle is still not crossed
-    if ((d1 < 0 && d2 < 0) || (d1 * d1 > l && d2 * d2 > l))
-      continue;
-    return true;
-  }
-  return false;
-}
-
-// Returns cost (time + resource consumption) of edge connecting two nodes
-double calculateCost(int node1, int node2)
-{
-  double d = nodeDistances[node1][node2];
-  double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
-  switch (planets[node2].resupply)
-  {
-  case OXYGEN:
-    speed = singleResupplySpeed, t = d / speed;
-    oxygenConsumed = 0;
-    foodConsumed = kl * t;
-    break;
-  case FOOD:
-    speed = singleResupplySpeed, t = d / speed;
-    foodConsumed = 0;
-    oxygenConsumed = kl * t;
-    break;
-  default:
-    speed = idealSpeed, t = d / speed;
-    oxygenConsumed = foodConsumed = kl * t;
-    break;
-  }
-  fuelConsumed = kf * d * speed * speed;
-  return t + fuelConsumed + oxygenConsumed + foodConsumed;
-}
-
-// Brent's root-finding method for functions f(x, x0, y0)
+// Brent's method to determine roots of function (used in speed optimization)
 double brentRoot(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double fa = func(a, x0, y0);
@@ -406,7 +297,7 @@ double brentRoot(double a, double b, const double x0, const double y0, double (*
   return b;
 }
 
-// Bisection algorithm to determine roots of a function (used in speed optimization)
+// Bisection root-finding algorithm, robust but slower than Brent's
 double bisection(double a, double b, const double x0, const double y0, double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double c;
@@ -434,16 +325,16 @@ double bisection(double a, double b, const double x0, const double y0, double (*
   return c;
 }
 
-double derivFunc(const double theta, const double x0, const double y0)
-{
-  double cosTheta = cos(theta), sinTheta = sin(theta);
-  return x0 * cosTheta - y0 * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
-}
-
+// Used in speed optimization
 double func(const double theta, const double x0, const double y0)
 {
   double cosTheta = cos(theta), sinTheta = sin(theta);
   return x0 * sinTheta + y0 * cosTheta - sinTheta * cosTheta;
+}
+double derivFunc(const double theta, const double x0, const double y0)
+{
+  double cosTheta = cos(theta), sinTheta = sin(theta);
+  return x0 * cosTheta - y0 * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
 }
 
 // Extracts data from inputted CSV map with error handling
@@ -683,12 +574,76 @@ int parseCSV()
   return 0;
 }
 
+/****************************************************************** Pathfinding ******************************************************************/
+
+double calculateDistance(const Point pos1, const Point pos2)
+{
+  double dx = pos2.x - pos1.x, dy = pos2.y - pos1.y;
+  return sqrt(dx * dx + dy * dy);
+}
+
+// Returns cost (time + resource consumption) of edge connecting two nodes
+double calculateCost(int node1, int node2)
+{
+  double d = nodeDistances[node1][node2];
+  double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
+  switch (planets[node2].resupply)
+  {
+  case OXYGEN:
+    speed = singleResupplySpeed, t = d / speed;
+    oxygenConsumed = 0;
+    foodConsumed = kl * t;
+    break;
+  case FOOD:
+    speed = singleResupplySpeed, t = d / speed;
+    foodConsumed = 0;
+    oxygenConsumed = kl * t;
+    break;
+  default:
+    speed = idealSpeed, t = d / speed;
+    oxygenConsumed = foodConsumed = kl * t;
+    break;
+  }
+  fuelConsumed = kf * d * speed * speed;
+  return t + fuelConsumed + oxygenConsumed + foodConsumed;
+}
+
+bool edgeInHostileRadius(const int startNode, const int endNode)
+{
+  // Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
+  Point &start = planets[startNode].position, end = planets[endNode].position;
+  // Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
+  double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
+  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
+  double l = run * run + rise * rise;                                            // Length of line
+  for (auto &planet : planets)
+  {
+    if (planet.hostileRadius < EPSILON)
+      continue;
+    Point &center = planet.position;
+    // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
+    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
+    // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
+    double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
+    double discriminant = b * b - 4 * c;
+    // If discriminant < 0, no solution and edge does not cross hostile circle
+    if (discriminant < 0)
+      continue;
+    double d1 = (-b + sqrt(discriminant)) / 2, d2 = (-b - sqrt(discriminant)) / 2; // Roots from quadratic formula
+    // If both values for d are lower or higher than edge length, hostile circle is still not crossed
+    if ((d1 < 0 && d2 < 0) || (d1 * d1 > l && d2 * d2 > l))
+      continue;
+    return true;
+  }
+  return false;
+}
+
 // Provides pathfinding setup
 void initializeLists()
 {
   // Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
   double heuristic = (1 + kl) / singleResupplySpeed + kf * singleResupplySpeed * singleResupplySpeed;
-  heuristics = vector<double>(nodeCount, 0), backHeuristics = vector<double>(nodeCount, 0);
+  hF = vector<double>(nodeCount, 0), hB = vector<double>(nodeCount, 0);
   Point sourcePos = planets[0].position, sinkPos = planets[lastNodeIndex].position;
   nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
@@ -701,43 +656,25 @@ void initializeLists()
       // Eliminate edges crossing hostile radius
       if (hostileRadius != 0 || planets[j].hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
-        // nodeDistances[i][j] = nodeDistances[j][i] = INF;
         nodeCosts[i][j] = initialCosts[i][j] = nodeCosts[j][i] = initialCosts[j][i] = INF;
         if (j == lastNodeIndex)
-          heuristics[i] = heuristic * calculateDistance(planets[i].position, sinkPos);
+          hF[i] = heuristic * calculateDistance(planets[i].position, sinkPos);
         if (i == 0)
-          backHeuristics[j] = heuristic * calculateDistance(planets[j].position, sourcePos);
+          hB[j] = heuristic * calculateDistance(planets[j].position, sourcePos);
         continue;
       }
       double distance = nodeDistances[i][j] = nodeDistances[j][i] = calculateDistance(planets[i].position, planets[j].position);
-      /*if (i != lastNodeIndex)*/
       nodeCosts[i][j] = initialCosts[i][j] = calculateCost(i, j);
-      // else nodeCosts[i][j] = initialCosts[i][j] = INF;
-      /*if (j != lastNodeIndex)*/
       nodeCosts[j][i] = initialCosts[j][i] = calculateCost(j, i);
 
       // A* heuristic for each node
       if (j == lastNodeIndex)
-      {
-        // nodeCosts[j][i] = initialCosts[j][i] = INF;
-        heuristics[i] = heuristic * distance; // Use Euclidian distance to target as heuristic for forward search
-      }
+        hF[i] = heuristic * distance; // Use Euclidian distance to target as heuristic for forward search
       if (i == 0)
-        backHeuristics[j] = heuristic * distance; // Use Euclidian distance to source as heuristic for backward search
+        hB[j] = heuristic * distance; // Use Euclidian distance to source as heuristic for backward search
     }
     nodeCosts[i][i] = initialCosts[i][i] = INF;
   }
-  /*for (int i = 0; i < nodeCount; i++)
-  {
-    for (int j = 0; j < nodeCount; j++)
-    {
-      cout << i << " to " << j << ": " << initialCosts[i][j] << endl;
-    }
-  }*/
-  /*for (int i = 0; i < nodeCount; i++)
-  {
-   cout << i << ": " << heuristics[i] << ", " << backHeuristics[i] << endl;;
-  }*/
 }
 
 /*// Implements modified Bellman-Ford algorithm to find approximate best path
@@ -869,7 +806,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
         // Relax edge
         node2Data.minCost = newCost;
         node2Data.previousNode = node1;
-        pq.emplace(newCost + heuristics[node2], node2);
+        pq.emplace(newCost + hF[node2], node2);
       }
     }
   }
@@ -910,7 +847,6 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   {
     const pair<double, int> &forwardPair = pqF.top(), backwardPair = pqB.top();
     double costF = forwardPair.first, costB = backwardPair.first;
-    // cout << "Forward: " << costF << ", Backward: " << costB << "; ";
     if (bestCost < INF)
     {
       if (costF + costB >= bestCost)
@@ -922,24 +858,11 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     if (!visitedF[node1])
     {
       visitedF[node1] = true;
-      /*if (visitedB[node1])
-      {
-        // If node visited in both forward and backward search, check if it's the best meeting node
-        double newCost = gF[node1] + gB[node1];
-        if (newCost < bestCost)
-        {
-          bestCost = newCost;
-          meetingNode = node1;
-          cout << "Forward intersection: " << node1 << ",  " << bestCost << endl;
-        }
-      }
-      if (node1 == sink)
-        break; // CHECK - should I use this in bidirectional*/
       double g1 = gF[node1];
       for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
       {
         double cost = nodeCosts[node1][node2];
-        if (cost == INF || visitedF[node2]) // CHECK - should i check if node2 is visited?
+        if (cost == INF || visitedF[node2])
           continue;
         double newG = g1 + cost;
         if (newG < gF[node2])
@@ -947,7 +870,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
           // Relax edge
           gF[node2] = newG;
           parentsF[node2] = node1;
-          pqF.emplace(newG + heuristics[node2], node2); // CHECK - removing heuristic makes faster somehow
+          pqF.emplace(newG + hF[node2], node2);
           if (gB[node2] < INF)
           {
             double newCost = gF[node2] + gB[node2];
@@ -966,22 +889,10 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     if (!visitedB[node1])
     {
       visitedB[node1] = true;
-      /*if (visitedF[node1])
-      {
-        // If node visited in both forward and backward search, check if it's the best meeting node
-        double newCost = gF[node1] + gB[node1];
-        if (newCost < bestCost)
-        {
-          bestCost = newCost;
-          meetingNode = node1;
-        }
-      }
-      if (node1 == source)
-        break; // CHECK - should I use this in bidirectional*/
       double g1 = gB[node1];
       for (int node2 = 0; node2 < nodeCount; node2++) // Iterate through adjacent nodes
       {
-        double cost = nodeCosts[node2][node1]; // CHECK - should i reverse these
+        double cost = nodeCosts[node2][node1];
         if (cost == INF || visitedB[node2])
           continue;
         double newG = g1 + cost;
@@ -990,7 +901,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
           // Relax edge
           gB[node2] = newG;
           parentsB[node2] = node1;
-          pqB.emplace(newG + backHeuristics[node2], node2); // CHECK - removing heuristic makes faster somehow
+          pqB.emplace(newG + hB[node2], node2);
           if (gF[node2] < INF)
           {
             double newCost = gF[node2] + gB[node2];
@@ -1005,10 +916,9 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     }
   }
 
-  // Reconstruct path found by A* algorithm
+  // Reconstruct path
   if (meetingNode == -1)
     return -1;
-  // cout << "Meeting node: " << meetingNode << endl;
   vector<int> leftPath, rightPath;
   int node = meetingNode;
   while (node != -1)
@@ -1030,10 +940,8 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
     if (node != -1)
       rightPath.push_back(node);
   }
-  if (meetingNode != sink && (rightPath.empty() || rightPath.back() != sink)) // CHECK - meeting node is sink often
-    return -1;                                                                // Path didn't connect to sink
-  /*if (meetingNode == sink)
-    cout << "Meeting node is sink" << endl;*/
+  if (meetingNode != sink && (rightPath.empty() || rightPath.back() != sink))
+    return -1; // Path didn't connect to sink
   bestPath = leftPath;
   bestPath.insert(bestPath.end(), rightPath.begin(), rightPath.end());
   return bestPath.empty() ? -1 : 0;
@@ -1070,7 +978,6 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
   rv = aStarFun(bestPath, 0, lastNodeIndex);
   if (rv == -1)
     return -1;
-  // printPath("Best", bestPath, 0);
   bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
   set<Path> potentialPaths;      // Use set to avoid duplicates and automatic sorting
   for (int k = 1; k < pathCount; k++)
@@ -1124,7 +1031,6 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       double cost = 0;
       for (int j = 1; j < pathLength; j++)
         cost += initialCosts[totalPath[j - 1]][totalPath[j]];
-      // printPath("Potential - " + to_string(k), totalPath, cost);
       potentialPaths.emplace(totalPath, cost); // Adds complete path sorted by ascending cost, avoiding duplicates
     }
 
@@ -1132,78 +1038,13 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       break;
     auto it = potentialPaths.begin();
     const Path &path = *it; // First element of set returns best path
-    // printPath("Best - " + to_string(k), path.path, path.cost);
     bestPaths.push_back(path.path);
     potentialPaths.erase(it);
   }
   return 0;
 }
 
-void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
-{
-  string startPlanet = planets[0].name;
-  cout << endl
-       << endl
-       << "PROGRAM OUTPUT" << endl;
-  cout << "Starting Planet: " << startPlanet << ", Target Planet: " << planets[lastNodeIndex].name << endl;
-  cout << "Name of Map Used: " << mapName << endl;
-  cout << "Planet Travel Order (excluding " << startPlanet << "): " << endl
-       << endl;
-  cout << right << setw(15) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
-  cout << scientific << setprecision(5);
-  double travelTime = 0.0;
-  double travelDistance = 0.0;
-  // double ucost = 0.0;
-  int pathLength = path.size();
-  for (int i = 1; i < pathLength; i++)
-  {
-    int node = path[i];
-    PlanetData planet = planets[node];
-    double d = nodeDistances[path[i - 1]][node], v = speeds[i], t = d / v;
-    // ucost += calculateCost(node0, node);
-    travelTime += t;
-    travelDistance += d;
-    double fu = fuel[i], s = travelTime - (fu + oxygen[i] + food[i]);
-    string o = "-", fo = "-";
-    switch (planet.resupply)
-    {
-    case OXYGEN:
-      o = "-->  " + to_string((int)maxOxygen);
-      break;
-    case FOOD:
-      fo = "-->  " + to_string((int)maxFood);
-      break;
-    default:
-      break;
-    }
-    if (edgeInHostileRadius(path[i - 1], node))
-      cout << "Edge crosses hostile radius" << endl;
-    cout << setw(3) << i << ")"
-         << right
-         << setw(11) << planet.name << "   "
-         << setw(11) << v << "   "
-         << setw(11) << d << "   "
-         << setw(11) << travelTime << "   "
-         << setw(11) << fu << "   "
-         << setw(11) << rawOxygen[i] << "  "
-         << setw(9) << o << "   "
-         << setw(11) << rawFood[i] << "  "
-         << setw(9) << fo << "   "
-         << setw(12) << s
-         << endl;
-  }
-  cout << endl
-       << "Final stats: " << endl;
-  double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
-  cout << "Total time: " << travelTime << endl;
-  cout << "Total Distance: " << travelDistance << endl;
-  cout << "Remaining fuel: " << fuelLeft << endl;
-  cout << "Remaining oxygen: " << oxygenLeft << endl;
-  cout << "Remaining food: " << foodLeft << endl;
-  cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
-}
-
-double calcData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
+/*double calcData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
   int pathLength = path.size();
   double score = 0.0;
@@ -1231,41 +1072,37 @@ double calcData(vector<int> &path, vector<double> &speeds, vector<double> &fuel,
   }
   score -= fuel.back() + oxygen.back() + food.back();
   return score;
-}
+}*/
 
-// Optimizes speed of individual graph edge in optimizeSpeed
+/****************************************************************** Speed/Resource optimization ******************************************************************/
+
+// Optimizes speed solution along line of slope m (see optimizeSpeed())
 int getIdealSpeed(double &v1, double &v2, double &score, const double m,
-                  const double b, const double c, vector<Boundary> &bs)
+                  const double b, const double c, const vector<Boundary> &bs)
 {
-  double outerIntersection = 1 / sqrt(1 + m * m);
+  double outerIntersection = 1 / sqrt(1 + m * m); // Intersection of line and circle (fuel constraint)
   double innerIntersection = 0.0;
   double xi, x1, y1;
-  for (auto &boundary : bs)
+  for (auto &boundary : bs) // Intersection of line and food/oxygen boundary curves
   {
     x1 = boundary.xb;
     y1 = boundary.yb;
     if (fabs(x1) < EPSILON)
-    {
       xi = y1 / m;
-    }
     else if (fabs(y1) < EPSILON)
-    {
       xi = x1;
-    }
     else
-    {
       xi = x1 + y1 / m;
-    }
     if (xi > innerIntersection)
       innerIntersection = xi;
-    // cout << "xi:" << m << "," << x1 << "," << y1 << "," << xi << "," << innerIntersection << "," << outerIntersection << endl;
   }
   if (innerIntersection >= outerIntersection)
     return -1;
-  double v1Ideal = cbrt(0.5 * b / c);
+  double v1Ideal = cbrt(0.5 * b / c); // Analytic solution of ideal speed on line
   double di = 1e-5 * (outerIntersection - innerIntersection);
   double v1Min = innerIntersection + di, v1Max = outerIntersection - di;
   int returnVal;
+  // Clamps solution to be in the area bounded by constraint curves
   if (v1Ideal < v1Min)
   {
     v1 = v1Min;
@@ -1283,10 +1120,10 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
   }
   v2 = m * v1;
   score = b / v1 + c * v1 * v1;
-
   return returnVal;
 }
 
+// Uses grid minimization method to find minimum score of best speeds (see optimizeSpeed())
 int gridMinimize(double &xm, double &fm, double &v1, double &v2, int ng, double a, double b,
                  double fuel0, double mvx, double mvy, vector<Boundary> &bs)
 {
@@ -1315,7 +1152,6 @@ int gridMinimize(double &xm, double &fm, double &v1, double &v2, int ng, double 
     bb = mvx + mvy / s;
     cc = fuel0 + fuel0 * s * s;
     returnVal = getIdealSpeed(v1, v2, score, s, bb, cc, bs);
-    // cout << "ss:" << i << "," << s << "," << bb << "," << cc << "," << v1 << "," << v2 << "," << score << "," << returnVal << "," << bestSlope.index << "," << (bestSlope.index>=0?ts[bestSlope.index]:0.0) << "," << bestSlope.score << endl;
     if (returnVal >= 0)
     {
       ss[i] = score;
@@ -1365,7 +1201,6 @@ int gridMinimize(double &xm, double &fm, double &v1, double &v2, int ng, double 
         v1b = v1;
         v2b = v2;
         sb = score;
-        // cout << "sp:" << ib << "," << s << "," << score << "," << v1 << "," << v2 << endl;
       }
     }
   }
@@ -1375,7 +1210,7 @@ int gridMinimize(double &xm, double &fm, double &v1, double &v2, int ng, double 
   return 0;
 }
 
-// Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find minimum of func in [a, b]
+// Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find minimum score of best speeds (see optimizeSpeed())
 int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
                   double fuel0, double mvx, double mvy, vector<Boundary> &bs,
                   const double tolerance = 1e-6, const int maxIter = 500)
@@ -1427,7 +1262,7 @@ int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, doub
         d = p / q;
         double u = x + d;
 
-        // f must not be evaluated too close to a or b
+        // f cannot be evaluated too close to a or b
         if ((u - a) < tol2 || (b - u) < tol2)
           d = (x < midpoint) ? tol1 : -tol1;
       }
@@ -1483,48 +1318,48 @@ int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, doub
   return 0;
 }
 
-// Optimizes speed of entire path for Method 3 in optimizePath
+// Divides path into two segments: i0-1 to im and im to i1 (i0=im for our calls) and optimizes speed for i0-1 to im
+// Optimization is done by scaling ideal speeds for nodes in i0-1 to im by constant factor and for nodes in im to i1 by constant factor
+// Method 3 in OptimizePath() uses a loop to set each node to im and i0, thus eventually optimizing the entire path
 int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
                   vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food)
 {
+  // Each constraint (fuel, food, oxygen) can be represented by a boundary curve on a graph that depends on the resupply type of each node
+  // The area inside these boundaries is the solution space that will satisfy these constraints (resources never drop below 0)
   int returnVal = -1;
   double v1, v2, score;
-  int i;
   double fuel0 = fuel[i0 - 1], oxygen0 = oxygen[i0 - 1], food0 = food[i0 - 1];
   int ni = i1 - i0 + 2;
   vector<double> cs(ni), ci(ni);
-  cs[0] = 0.0;
-  ci[0] = 0.0;
+  cs[0] = ci[0] = 0.0;
   double dx = 0.0, dy = 0.0, sx = 0.0, sy = 0.0, mx = 0.0, my = 0.0;
-  for (i = i0; i <= i1; i++)
+  int i;
+  for (i = i0; i <= i1; i++) // Calculates values and cumulative sums used later to determine boundaries
   {
     double di = nodeDistances[path[i - 1]][path[i]];
     double ds2 = di * speeds[i] * speeds[i];
     double dos = di / speeds[i];
-    // double dz2 = cbrt(0.5 * mb[i] / kf);
-    // dz2 = di * dz2 * dz2;
     if (i <= im)
     {
       dx += di;
       sx += ds2;
       mx += dos * mb[i];
-      // zx += dz2;
     }
     else
     {
       dy += di;
       sy += ds2;
       my += dos * mb[i];
-      // zy += dz2;
     }
-    // cout << "mb:" << i <<","<<di<<","<<dos<<","<<mb[i]<<","<<dos*mb[i]<<endl;
     cs[i - i0 + 1] = cs[i - i0] + ds2;
     ci[i - i0 + 1] = ci[i - i0] + dos;
   }
+  // The fuel constraint introduces the boundary (v1)^2 + (v2)^2 < 1
+  // Graphically this is the area bounded by a circle of radius 1 (and in the first quadrant because all speeds and scale factors are positive)
+  double vx = sqrt(kf / fuel0 * sx); // Constant factor for i0-1 to m is v1/vx
+  double vy = sqrt(kf / fuel0 * sy); // Constant factor for m to i1 is v2/vy
   vector<Boundary> bs;
-  double vx = sqrt(kf / fuel0 * sx);
-  double vy = sqrt(kf / fuel0 * sy);
-  for (int ir = 0; ir < 2; ir++)
+  for (int ir = 0; ir < 2; ir++) // Fills bs with list of food/oxygen boundary curves introduced by each resupply node
   {
     Resupply rtp;
     double q0;
@@ -1549,58 +1384,49 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
         if (i <= im)
         {
           ix = ci[i - i0 + 1] - ci[bestIndex - i0 + 1];
-          bs.emplace_back(bx * ix, 0.0);
+          bs.emplace_back(bx * ix, 0.0); // Vertical boundary curve
         }
         else if (bestIndex < im)
         {
           ix = ci[im - i0 + 1] - ci[bestIndex - i0 + 1];
           iy = ci[i - i0 + 1] - ci[im - i0 + 1];
-          bs.emplace_back(bx * ix, by * iy);
+          bs.emplace_back(bx * ix, by * iy); // Curvilinear boundary
         }
         else
         {
           iy = ci[i - i0 + 1] - ci[bestIndex - i0 + 1];
-          bs.emplace_back(0, by * iy);
+          bs.emplace_back(0, by * iy); // Horizontal boundary curve
         }
-        // cout << "bs:" << rtp << "," << q0 << "," << ir << "," << ix << "," << iy << "," << bx*ix << "," << by*iy << "," << i << "," << bestIndex << "," << im << "," << i0 << endl;
         bestIndex = i;
         q0 = ir == 0 ? maxOxygen : maxFood;
       }
     }
   }
 
-  double idealSlope = sqrt(sy / sx);
-  double idealTheta = atan(idealSlope);
-  double thetaMin = 0.0;
-  double thetaMax = M_PI_2;
+  double thetaMin = 0.0, thetaMax = M_PI_2; // Angles of lines from origin to intersection points of curves (used to find bounded area)
   for (i = 0; i < bs.size(); i++)
   {
     if (fabs(bs[i].xb) < EPSILON)
     {
       if (bs[i].yb >= 1)
-      {
         thetaMin = M_PI_2;
-      }
       else
-      {
         thetaMin = max(thetaMin, asin(bs[i].yb));
-      }
     }
     else if (fabs(bs[i].yb) < EPSILON)
     {
       if (bs[i].xb >= 1)
-      {
         thetaMax = 0.0;
-      }
       else
-      {
         thetaMax = min(thetaMax, acos(bs[i].xb));
-      }
     }
     else
     {
+      // Determines the intersection point of curves using root-finding algorithm
+      // Tightest thetaMin/thetaMax is used (to satisfy every constraint)
       if (rootAlgo == 0)
       {
+        // Find minimum using 1st Derivative Test to determine interval of root (required for algorithm)
         double tm = bisection(0, M_PI_2, bs[i].xb, bs[i].yb, derivFunc);
         thetaMin = max(thetaMin, bisection(0, tm, bs[i].xb, bs[i].yb, func));
         thetaMax = min(thetaMax, bisection(tm, M_PI_2, bs[i].xb, bs[i].yb, func));
@@ -1612,18 +1438,15 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
         thetaMax = min(thetaMax, brentRoot(tm, M_PI_2, bs[i].xb, bs[i].yb, func));
       }
     }
-    // cout << "th:" << i << "," << bs[i].xb << "," << bs[i].yb << "," << thetaMin << "," << thetaMax << "," << idealSlope << endl;
     if (thetaMin >= thetaMax)
-    {
       return -1;
-    }
   }
   double a, b, c, s;
   double ds = (thetaMax - thetaMin) * 1e-5;
-  thetaMin += ds;
-  thetaMax -= ds;
-  b = slopeDA * M_PI_2;
-  if (idealTheta < thetaMin)
+  thetaMin += ds, thetaMax -= ds;                                   // Slightly narrow boundaries for affordance
+  double idealSlope = sqrt(sy / sx), idealTheta = atan(idealSlope); // Ideal theta defined when scale factors are 1
+  b = slopeDA * M_PI_2;                                             // b (default 20% of pi/2) is used to reduce search region for efficiency
+  if (idealTheta < thetaMin)                                        // Clamp idealTheta to thetaMin and thetaMax
   {
     idealTheta = thetaMin;
     s = thetaMin + b;
@@ -1643,7 +1466,9 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
     thetaMax = min(s, thetaMax);
   }
 
-  int ib = -1;
+  // Iterates through lines of angles from thetaMin to thetaMax, finds  best speed for point on each line within solution space
+  // Minimizes score of best speeds using minimization algorithm to find absolute best
+  int foundMinimum = -1;
   double mvx = mx * vx;
   double mvy = my * vy;
   double sb = INF;
@@ -1651,27 +1476,20 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
   if (scanSlope > 3)
   {
     if (minAlgo == 0)
-    {
-      ib = gridMinimize(s, sb, v1b, v2b, scanSlope, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
-    }
+      foundMinimum = gridMinimize(s, sb, v1b, v2b, scanSlope, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
     else
-    {
-      ib = brentMinimize(s, sb, v1b, v2b, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
-    }
+      foundMinimum = brentMinimize(s, sb, v1b, v2b, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
   }
 
+  // If minimum could not be found, uses ideal slope to find a solution
   idealSlope = tan(idealTheta);
   double minSlope = tan(thetaMin);
   double maxSlope = tan(thetaMax);
-  if (ib < 0 || idealCheck > 0)
+  if (foundMinimum < 0 || idealCheck > 0)
   {
     b = mvx + mvy / idealSlope;
     c = fuel0 + fuel0 * idealSlope * idealSlope;
     returnVal = getIdealSpeed(v1, v2, score, idealSlope, b, c, bs);
-    if (idealCheck > 1)
-    {
-      cout << "sf:" << returnVal << "," << idealSlope << "," << score << "," << sb << "," << v1 << "," << v1b << ", " << v2 << ", " << v2b << ", " << minSlope << ", " << maxSlope << endl;
-    }
     if (score > sb)
     {
       v1 = v1b;
@@ -1684,19 +1502,14 @@ int optimizeSpeed(int i0, int im, int i1, vector<int> &path, vector<double> &mb,
     v2 = v2b;
   }
   for (i = i0; i <= im; i++)
-  {
-    speeds[i] *= v1 / vx;
-  }
+    speeds[i] *= v1 / vx; // Scale speeds for nodes in segment i0-1 to im by constant factor
   for (i = im + 1; i <= i1; i++)
-  {
-    speeds[i] *= v2 / vy;
-  }
-  // cout << "v:" << v1 << "," << v2 << "," << speeds[im] << "," << speeds[im+1] << endl;
+    speeds[i] *= v2 / vy; // Scale speeds for nodes in segment im to i1 by constant factor
 
   return returnVal;
 }
 
-// Optimizes resource usage on path with 3 methods (which increase in both robustness and computation time)
+// Optimizes speed/resource usage on path with 3 methods (which increase in both robustness and computation time)
 int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
   int error = 0;
@@ -1704,7 +1517,7 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
   int pathLength = path.size();
   vector<double> mb(pathLength);
 
-  // Method 1: set ideal speed by disregard both, one, or none of the kl terms if node is before both, one or none of the resupplies
+  // Method 1: set ideal speed by disregarding both, one, or none of the kl terms if node is before both, one or none of the last resupply types
   for (int i = pathLength - 1; i >= 1; i--)
   {
     // Iterate backward to find last oxygen and food resupplies
@@ -1795,7 +1608,7 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     }
   }
   double fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
-  // It can be mathematically proven (eg. with Lagrange multipliers) that the ideal speed is the same for all nodes with the same resupplyAfter type
+  // It can be mathematically proven (eg. with Lagrange multipliers) that the ideal speed is the same for all nodes with the same later resupply types
   score = 0.0;
   for (int i = 1; i < pathLength; i++)
   {
@@ -1907,7 +1720,7 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
 
   // Method 3: If Method 2 (constant factor) fails, optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
   double prevScore = INF;
-  for (int iter = 0; iter < iterM3; iter++)
+  for (int iter = 0; iter < iterM3; iter++) // Iterate until solution is self-consistent (speed converges), guarantees correctness despite approximations
   {
     score = 0.0;
     fuelLeft = maxFuel, oxygenLeft = maxOxygen, foodLeft = maxFood;
@@ -1915,13 +1728,11 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     {
       int node = path[i];
       double distance = nodeDistances[path[i - 1]][node];
-      if (i < pathLength - 1)
+      if (i < pathLength - 1) // Iterate through each node in path and optimize speed for segment
       {
         if (optimizeSpeed(i, i, pathLength - 1, path, mb, speeds, fuel, oxygen, food) == -1)
           return -1;
       }
-      // calcData(path, speeds, tfuel, toxygen, tfood);
-      // printData(path, speeds, tfuel, toxygen, tfood);
       double speed = speeds[i];
       double t = distance / speed;
       double consumed = kl * t;
@@ -1947,14 +1758,6 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
       score += t;
     }
     score -= fuel.back() + oxygen.back() + food.back();
-    if (printIter > 0)
-    {
-      cout << "im3:" << iter << "," << score << endl;
-      /*if (printIter > 1)
-      {
-        printData(path, speeds, fuel, oxygen, food);
-      }*/
-    }
     double ds = max(0.01, fabs(score) * 5e-3);
     if (fabs(score - prevScore) < ds)
       break;
@@ -1966,11 +1769,75 @@ int optimizePath(vector<int> &path, double &score, vector<double> &speeds, vecto
     return -2;
 }
 
+/****************************************************************** Output ******************************************************************/
+
+void printData(vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
+{
+  string startPlanet = planets[0].name;
+  cout << endl
+       << endl
+       << "PROGRAM OUTPUT" << endl;
+  cout << "Starting Planet: " << startPlanet << ", Target Planet: " << planets[lastNodeIndex].name << endl;
+  cout << "Name of Map Used: " << mapName << endl;
+  cout << "Planet Travel Order (excluding " << startPlanet << "): " << endl
+       << endl;
+  cout << right << setw(15) << "Planet" << setw(14) << "Speed" << setw(14) << "Distance" << setw(14) << "Total Time" << setw(14) << "Fuel" << setw(14) << "Oxygen" << setw(11) << "Resupply" << setw(14) << "Food" << setw(11) << "Resupply" << setw(15) << "Score" << endl;
+  cout << scientific << setprecision(5);
+  double travelTime = 0.0;
+  double travelDistance = 0.0;
+  int pathLength = path.size();
+  for (int i = 1; i < pathLength; i++)
+  {
+    int node = path[i];
+    PlanetData planet = planets[node];
+    double d = nodeDistances[path[i - 1]][node], v = speeds[i], t = d / v;
+    travelTime += t;
+    travelDistance += d;
+    double fu = fuel[i], s = travelTime - (fu + oxygen[i] + food[i]);
+    string o = "-", fo = "-";
+    switch (planet.resupply)
+    {
+    case OXYGEN:
+      o = "-->  " + to_string((int)maxOxygen);
+      break;
+    case FOOD:
+      fo = "-->  " + to_string((int)maxFood);
+      break;
+    default:
+      break;
+    }
+    if (edgeInHostileRadius(path[i - 1], node))
+      cout << "Edge crosses hostile radius" << endl;
+    cout << setw(3) << i << ")"
+         << right
+         << setw(11) << planet.name << "   "
+         << setw(11) << v << "   "
+         << setw(11) << d << "   "
+         << setw(11) << travelTime << "   "
+         << setw(11) << fu << "   "
+         << setw(11) << rawOxygen[i] << "  "
+         << setw(9) << o << "   "
+         << setw(11) << rawFood[i] << "  "
+         << setw(9) << fo << "   "
+         << setw(12) << s
+         << endl;
+  }
+  cout << endl
+       << "Final stats: " << endl;
+  double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
+  cout << "Total time: " << travelTime << endl;
+  cout << "Total Distance: " << travelDistance << endl;
+  cout << "Remaining fuel: " << fuelLeft << endl;
+  cout << "Remaining oxygen: " << oxygenLeft << endl;
+  cout << "Remaining food: " << foodLeft << endl;
+  cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
+}
+
 void testPath()
 {
   string input;
   cout << endl
-       << "Path (New): ";
+       << "Path: ";
   getline(cin, input);
   cout << endl;
   int commaCount = count(input.begin(), input.end(), ',');
@@ -2258,7 +2125,6 @@ int main(int argc, char *argv[])
   if (nproc > 0)
     omp_set_num_threads(nproc);
   int np = omp_get_num_threads();
-  // cout << endl << "Parallel processors: inputted " << nproc << ", using " << np << endl;
 #endif
 
   // Input and setup
@@ -2273,10 +2139,6 @@ int main(int argc, char *argv[])
   initializeLists();
 
   // Pathfinding and speed/resource optimization
-  /*tartTime = chrono::steady_clock::now();
-  for (int i = 0; i < 1000000; i++) aStar();
-  long long c = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-  cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << c / 1000.0 << endl;*/
   vector<vector<int>> bestPaths;
   vector<int> bestPath;
   bool validPath = true;
@@ -2424,67 +2286,4 @@ int main(int argc, char *argv[])
     while (testMode == 2)
       testPath();
   }
-
-  /*long long calcTime;
-  if (bestPath.length() > 0)
-  {
-    vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength);
-    if (skipSingle == 0)
-    {
-      cout << endl;
-      cout << "Single search: " << endl;
-      if (optimizePath(path, speeds, fuel, oxygen, food) == 0)
-        printData(path, speeds, fuel, oxygen, food);
-      else
-        cout << "Invalid path" << endl;
-      // Convert microseconds to milliseconds, fix 3 decimal places
-      calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-      cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
-      cout << endl;
-    }
-    if (skipOld == 0)
-    {
-      cout << endl;
-      cout << "Old single search: " << endl;
-      if (oldOptimizePath(path, speeds, fuel, oxygen, food) == 0)
-        printData(path, speeds, fuel, oxygen, food);
-      else
-        cout << "Invalid path" << endl;
-      // Convert microseconds to milliseconds, fix 3 decimal places
-      calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-      cout << "Calculation time (milliseconds): " << fixed << setprecision(3) << calcTime / 1000.0 << endl;
-      cout << endl;
-    }
-  }
-  else
-  {
-    cout << "Path has length 0" << endl;
-  }
-
-  // Speed/resource optimization
-  if (searchThreshold > 0)
-  {
-    cout << endl;
-    double minCost = 0.0, maxCost = nodes.back().minCost * searchThreshold;
-    // Smaller maxCost improves efficiency but lower accuracy, so if there is a valid best path within a smaller interval, it is better to use it
-    // If not, iterate through increasing cost intervals until valid best path is found
-    while (true)
-    {
-      cout << "iteration" << endl;
-      try
-      {
-        if (searchBestPaths(minCost, maxCost) == 0)
-          break;
-        minCost = maxCost;
-        maxCost *= 2;
-      }
-      catch (...)
-      {
-        // If error is thrown (eg. maxCost outside double limit) before valid path is found, the map is invalid
-        cout << "Mission failed: Valid path could not be found. Please try again." << endl;
-        return -1;
-      }
-    }
-  }
-  */
 }
