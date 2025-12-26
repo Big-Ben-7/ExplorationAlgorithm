@@ -669,19 +669,21 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       rootPath.assign(lastBestPath.begin(), lastBestPath.begin() + i + 1); // Sequence of nodes from source to spur node
       sameRootPaths.clear();                                               // Store paths with removed edges to speed up restoring
       int bestPathsCount = bestPaths.size();
+      // Modify graph to produce different best path
       for (int j = 0; j < bestPathsCount; j++)
       {
         vector<int> &path = bestPaths[j];
         if (rootPath.size() <= path.size() && equal(rootPath.begin(), rootPath.end(), path.begin()))
         {
           sameRootPaths.push_back(j);
-          nodeCosts[path[i]][path[i + 1]] = INF; // Remove edges from spur nodes of other paths sharing same same root to prevent duplicate paths
+          nodeCosts[path[i]][path[i+1]] = INF; // Remove edges from spur nodes of other paths sharing same same root to prevent duplicate paths
         }
       }
       for (int j = 0; j < i; j++)
       {
+        int node = lastBestPath[j];
         for (int m = 0; m < nodeCount; m++)
-          nodeCosts[lastBestPath[j]][m] = nodeCosts[m][lastBestPath[j]] = INF; // Remove all nodes in root path from graph to prevent cycles
+          nodeCosts[node][m] = nodeCosts[m][node] = INF; // Remove all nodes in root path from graph to prevent cycles
       }
       int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
       spurPath.clear();
@@ -692,17 +694,19 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       for (int j = 0; j < sameRootCount; j++)
       {
         vector<int> &path = bestPaths[sameRootPaths[j]];
-        nodeCosts[path[i]][path[i + 1]] = initialCosts[path[i]][path[i + 1]];
+        int node1 = path[i], node2 = path[i+1];
+        nodeCosts[node1][node2] = initialCosts[node1][node2];
       }
       for (int j = 0; j < i; j++)
       {
+        int node = lastBestPath[j];
         for (int m = 0; m < nodeCount; m++)
         {
-          nodeCosts[lastBestPath[j]][m] = initialCosts[lastBestPath[j]][m];
-          nodeCosts[m][lastBestPath[j]] = initialCosts[m][lastBestPath[j]];
+          nodeCosts[node][m] = initialCosts[node][m];
+          nodeCosts[m][node] = initialCosts[m][node];
         }
       }
-
+      
       if (error == -1)
         continue;
       totalPath = rootPath;
