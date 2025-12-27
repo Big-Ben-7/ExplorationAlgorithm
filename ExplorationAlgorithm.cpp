@@ -1,7 +1,6 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-#include <fstream>
 #include <vector>
 #include <queue>
 #include <string>
@@ -20,12 +19,13 @@ using namespace std;
 #define MAX_FUEL 3000
 #define MAX_OXYGEN 2000
 #define MAX_FOOD 2000
+#define BUFFER 1e-10
 #define INF numeric_limits<double>::infinity()
 #define EPSILON std::numeric_limits<double>::epsilon()
 
 // Command line options
 int maxTime = 60;
-int pathFactor = 5;
+double pathFactor = 5;
 double distanceScale = 1.0;
 int testMode = 0;
 string fileName = "";
@@ -59,6 +59,16 @@ struct PlanetData
   PlanetData(string n, double x, double y, Resupply r, double h)
   {
     name = n, position = Position(x, y), resupply = r, hostileRadius = h;
+  }
+};
+struct HostilePlanet
+{
+  Position position;
+  double radius;
+  HostilePlanet(Position &p, double r)
+  {
+    position = p;
+    radius = r;
   }
 };
 // Represents path of nodes (planets)
@@ -111,6 +121,7 @@ vector<vector<double>> initialCosts; // Stores initial cost between two node ind
 
 vector<double> hF, hB; // List of each node's heuristics for forward and backward search in pathfinding
 vector<PlanetData> planets;
+vector<HostilePlanet> hostilePlanets;
 int nodeCount, lastNodeIndex, longestNameLength;
 chrono::steady_clock::time_point startTime;
 string mapName;
@@ -124,6 +135,7 @@ const double idealSpeed = cbrt((1 + 2 * kl) / (2 * kf));
 const double singleResupplySpeed = cbrt((1 + kl) / (2 * kf));
 // With both resupply type remaining, ideal speed can disregard consumption of both kl terms because both oxygen and food will be resupplied later
 const double doubleResupplySpeed = 1 / cbrt(2 * kf);
+
 
 /************************************************************ Input ************************************************************/
 
@@ -188,7 +200,6 @@ double calculateDistance(const Position &pos1, const Position &pos2)
 // Extracts data from inputted CSV map with error handling
 int parseCSV()
 {
-  vector<int> hostileIndices;
   if (fileName.empty())
   {
     cout << endl
@@ -233,6 +244,7 @@ int parseCSV()
 
   // Extract data with error handling
   string planetName, type, resupply, substring;
+  vector<int> hostileIndices;
   int lineNumber = 1;
   double x, y, hostileRadius;
   while (getline(iFile, line))
@@ -380,19 +392,21 @@ int parseCSV()
   nodeCount = lineNumber - 1, lastNodeIndex = lineNumber - 2;
 
   // Remove unreachable planets (lying inside hostile radius)
-  vector<int> unreachableIndices;
+  set<int, greater<int>> unreachableIndices;
   int hostileCount = hostileIndices.size();
   for (int i : hostileIndices)
   {
-    PlanetData planet = planets[i];
-    Position pos = planet.position;
+    PlanetData &planet = planets[i];
+    Position &pos = planet.position;
     double hostileRadius = planet.hostileRadius;
     for (int j = 0; j < nodeCount; j++)
     {
-      PlanetData planet2 = planets[j];
-      if (planet2.hostileRadius < EPSILON && calculateDistance(pos, planet2.position) <= hostileRadius)
+      if (i == j) continue;
+      PlanetData &planet2 = planets[j];
+      double d = calculateDistance(pos, planet2.position), r = planet2.hostileRadius;
+      if ((r < EPSILON && d <= hostileRadius) || (r > EPSILON && r <= hostileRadius - d))
       {
-        unreachableIndices.push_back(j);
+        unreachableIndices.insert(j);
         if (j == 0)
         {
           cout << "Error: The first planet (" << planets[0].name << ") is in the hostile radius of planet " << planet.name << "." << endl;
@@ -406,7 +420,6 @@ int parseCSV()
       }
     }
   }
-  sort(unreachableIndices.begin(), unreachableIndices.end(), greater<int>());
   for (int i : unreachableIndices)
     planets.erase(planets.begin() + i);
   nodeCount = planets.size();
@@ -422,9 +435,15 @@ int parseCSV()
       planet.hostileRadius *= distanceScale;
     }
   }
+  for (auto &planet : planets)
+  {
+    if (planet.hostileRadius > EPSILON)
+      hostilePlanets.emplace_back(planet.position, planet.hostileRadius);
+  }
   iFile.close();
   return 0;
 }
+
 
 /************************************************************ Pathfinding ************************************************************/
 
@@ -462,13 +481,11 @@ bool edgeInHostileRadius(const int startNode, const int endNode)
   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
   double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); // Precompute trig for efficiency
   double l = run * run + rise * rise;                                            // Length of line
-  for (auto &planet : planets)
+  for (auto &planet : hostilePlanets)
   {
-    if (planet.hostileRadius < EPSILON)
-      continue;
     Position &center = planet.position;
     // Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-    double x3 = center.x, y3 = center.y, r = planet.hostileRadius, dx = x1 - x3, dy = y1 - y3;
+    double x3 = center.x, y3 = center.y, r = planet.radius, dx = x1 - x3, dy = y1 - y3;
     // Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
     double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; // a=1
     double discriminant = b * b - 4 * c;
@@ -735,6 +752,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
   return 0;
 }
 
+
 /************************************************************ Speed/Resource optimization ************************************************************/
 
 // Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
@@ -748,7 +766,7 @@ double bisection(double a, double b, const double x0, const double y0,
   while (fabs(b - a) > tolerance * c)
   {
     double fc = func(c, x0, y0);
-    if (fabs(fc) < tolerance)
+    if (fabs(fc) < EPSILON)
       return c;
     if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0))
     {
@@ -800,7 +818,7 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
   if (innerIntersection >= outerIntersection)
     return -1;
   double v1Ideal = cbrt(0.5 * b / c); // Analytic solution of ideal speed on line
-  double di = 1e-5 * (outerIntersection - innerIntersection);
+  double di = BUFFER * (outerIntersection - innerIntersection);
   double v1Min = innerIntersection + di, v1Max = outerIntersection - di;
   int returnVal;
   // Clamps solution to be in the area bounded by constraint curves
@@ -825,7 +843,7 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
 }
 
 // Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find best speeds (see optimizeSpeed())
-int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
+int minimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
                   const double fuel0, const double mvx, const double mvy, const vector<Boundary> &bs,
                   const double tolerance = 1e-6, const int maxIter = 500)
 {
@@ -882,7 +900,7 @@ int brentMinimize(double &xm, double &fm, double &v1, double &v2, double a, doub
       }
       else
       {
-        // Fall back to golden section search
+        // Fall back to Golden section search
         e = (x >= midpoint) ? (a - x) : (b - x);
         d = phi * e;
       }
@@ -1047,7 +1065,7 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
       return -1;
   }
   double a, c, s;
-  double ds = (thetaMax - thetaMin) * 1e-5;
+  double ds = (thetaMax - thetaMin) * BUFFER;
   thetaMin += ds, thetaMax -= ds;                                   // Slightly narrow boundaries for affordance
   double idealSlope = sqrt(sy / sx), idealTheta = atan(idealSlope); // Ideal theta defined when scale factors are 1
   if (idealTheta < thetaMin)
@@ -1076,7 +1094,7 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
   double mvy = my * vy;
   double sb = INF;
   double v1b = 0.0, v2b = 0.0;
-  brentMinimize(s, sb, v1b, v2b, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
+  minimize(s, sb, v1b, v2b, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
 
   // Test solution against ideal slope as a final check (needed if min could not be found)
   idealSlope = tan(idealTheta);
@@ -1204,7 +1222,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
     int node = path[i];
     double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = kl * t;
     foodLeft -= consumed, oxygenLeft -= consumed;
-    if (error == 0 && (oxygenLeft < EPSILON || foodLeft < EPSILON))
+    if (error == 0 && (oxygenLeft < BUFFER || foodLeft < BUFFER))
       error = -1;
     rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
     fuelLeft -= kf * distance * speed * speed;
@@ -1223,7 +1241,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
     score += t;
   }
   score -= fuel.back() + oxygen.back() + food.back();
-  if (error == 0 && fuelLeft > EPSILON)
+  if (error == 0 && fuelLeft > BUFFER)
     return 0;
 
   // Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
@@ -1240,7 +1258,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       speeds[i] *= speedFactor;
       double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = kl * t;
       fuelLeft -= kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
-      if (oxygenLeft < EPSILON || foodLeft < EPSILON)
+      if (oxygenLeft < BUFFER || foodLeft < BUFFER || fuelLeft < BUFFER)
       {
         error = -1;
         break;
@@ -1284,6 +1302,11 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       double t = distance / speed;
       double consumed = kl * t;
       fuelLeft -= kf * distance * speed * speed, oxygenLeft -= consumed, foodLeft -= consumed;
+      if (oxygenLeft < BUFFER || foodLeft < BUFFER || fuelLeft < BUFFER)
+      {
+        error = -1;
+        break;
+      }
       rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
       switch (planets[node].resupply)
       {
@@ -1369,10 +1392,10 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
     longestNameLength = 6;
   vector<string> speedStrings;
   int longestSpeedLength = 0;
-  for (int i = 0; i < pathLength; i++)
+  for (double speed : speeds)
   {
     stringstream ss;
-    ss << defaultfloat << setprecision(15) << speeds[i];
+    ss << fixed << setprecision(14) << speed;
     string speedString = ss.str();
     speedStrings.push_back(speedString);
     if (speedString.size() > longestSpeedLength)
@@ -1387,7 +1410,8 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl;
   cout << "Note: Some values are in scientific notation for consistent formatting (e.g., 6.67e-02 = 6.67*10^(-2) = 0.0667)" << endl
        << endl;
-  cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(11) << "Distance |" << setw(11) << "Time |" << setw(11) << "Fuel |" << setw(9) << "Oxygen" << setw(8) << "Res. |" << setw(9) << "Food" << setw(8) << "Res. |" << setw(12) << "Score |" << endl;
+  cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(12) << "Distance |" << setw(12) << "Time |" << setw(12) << "Fuel |" << setw(10) << "Oxygen" << setw(8) << "Res. |" << setw(10) << "Food" << setw(8) << "Res. |" << setw(13) << "Score |" << endl;
+  cout << scientific << setprecision(3);
   double travelTime = 0.0;
   double travelDistance = 0.0;
   for (int i = 1; i < pathLength; i++)
@@ -1402,10 +1426,10 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
     switch (planet.resupply)
     {
     case OXYGEN:
-      o = to_string((int)MAX_OXYGEN);
+      o = "->" + to_string((int)MAX_OXYGEN);
       break;
     case FOOD:
-      fo = to_string((int)MAX_FOOD);
+      fo = "->" + to_string((int)MAX_FOOD);
       break;
     default:
       break;
@@ -1414,21 +1438,21 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
       cout << "Edge crosses hostile radius" << endl;
     cout << setw(indexWidth) << i << ")  "
          << setw(longestNameLength) << planet.name << " | "
-         << setw(longestSpeedLength) << defaultfloat << setprecision(15) << v << " | "
-         << setw(8) << scientific << setprecision(2) << d << " | " // Scientific notation for consistent formatting
-         << setw(8) << travelTime << " | "
-         << setw(8) << fu << " | "
-         << setw(8) << rawOxygen[i] << "  "
-         << setw(4) << o << " | "
-         << setw(8) << rawFood[i] << "  "
-         << setw(4) << fo << " | "
-         << setw(9) << s << " |"
+         << setw(longestSpeedLength) << speedStrings[i] << " | "
+         << setw(9) << d << " | " // Scientific notation for consistent formatting
+         << setw(9) << travelTime << " | "
+         << setw(9) << fu << " | "
+         << setw(9) << rawOxygen[i]
+         << setw(6) << o << " | "
+         << setw(9) << rawFood[i]
+         << setw(6) << fo << " | "
+         << setw(10) << s << " |"
          << endl;
   }
   cout << endl
        << "Final stats" << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
-  cout << "Total time: " << defaultfloat << setprecision(12) << travelTime << endl;
+  cout << "Total time: " << defaultfloat << setprecision(10) << travelTime << endl;
   cout << "Total Distance: " << travelDistance << endl;
   cout << "Remaining fuel: " << fuelLeft << endl;
   cout << "Remaining oxygen: " << oxygenLeft << endl;
@@ -1614,14 +1638,13 @@ int main(int argc, char *argv[])
   // Define command line options
   int opt, index;
   static struct option long_options[] =
-  {
-      {"map", required_argument, 0, 'm'},           // Input map
-      {"maxTime", required_argument, 0, 't'},       // Max time in seconds until program times out (default 60)
-      {"pathFactor", required_argument, 0, 'p'},    // pathFactor * nodeCount = paths to generate each batch (default 5)
-      {"test", required_argument, 0, 'x'},          // Test mode (plots graph with Matplotlib, raw tests specific path)
-      {"distanceScale", required_argument, 0, 'd'}, // Scales all planet distances by constant factor distanceScale
-      {0, 0, 0, 0}
-  };
+      {
+          {"map", required_argument, 0, 'm'},           // Input map
+          {"maxTime", required_argument, 0, 't'},       // Max time in seconds until program times out (default 60)
+          {"pathFactor", required_argument, 0, 'p'},    // pathFactor * nodeCount = paths to generate each batch (default 5)
+          {"test", required_argument, 0, 'x'},          // Test mode (plots graph with Matplotlib, raw tests specific path)
+          {"distanceScale", required_argument, 0, 'd'}, // Scales all planet distances by constant factor distanceScale
+          {0, 0, 0, 0}};
   while ((opt = getopt_long(argc, argv, "m:", long_options, &index)) != -1)
   {
     switch (opt)
@@ -1633,7 +1656,7 @@ int main(int argc, char *argv[])
       maxTime = atoi(optarg);
       break;
     case 'p':
-      pathFactor = atoi(optarg);
+      pathFactor = atof(optarg);
       break;
     case 'x':
       testMode = atoi(optarg);
@@ -1671,7 +1694,9 @@ int main(int argc, char *argv[])
 
   // Pathfinding and speed/resource optimization
   initializeLists();
-  int pathCount = pathFactor * nodeCount;
+  /*if (testMode > 0)
+    cout << "Initialized" << endl;*/
+  int pathCount = (int)pathFactor * nodeCount;
   if (pathCount < 50)
     pathCount = 50;
   else if (pathCount > 500)
@@ -1684,7 +1709,6 @@ int main(int argc, char *argv[])
   int maxIterations = maxTime * 1000 / pathCount; // Assuming ~0.1s per batch of size 100 on average
   for (int i = 0; i < maxIterations; i++)
   {
-    startTime = chrono::steady_clock::now();
     if (yens(bestPaths, pathCount) == -1)
     {
       // No more valid paths remaining
@@ -1694,10 +1718,12 @@ int main(int argc, char *argv[])
     }
     else
     {
+      /*if (testMode > 0)
+        cout << i << ") Ran yens" << endl;*/
       double bestScore = INF;
       double score;
       vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
-      int startBatch = pathCount * i, endBatch = min(startBatch + pathCount, (int) bestPaths.size());
+      int startBatch = pathCount * i, endBatch = min(startBatch + pathCount, (int)bestPaths.size());
       for (int j = startBatch; j < endBatch; j++) // Only optimize out of paths in current batch for efficiency
       {
         vector<int> &path = bestPaths[j];
