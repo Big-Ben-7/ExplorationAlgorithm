@@ -128,7 +128,7 @@ struct Boundary
 double pathFactor = 5;
 double distanceScale = 1.0;
 int inputPath = 0;
-int plotMap = 0;
+int plotGraph = 0;
 int randomMap = 0;
 string fileName = "";
 
@@ -155,7 +155,7 @@ const double singleResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
 //With both resupply type remaining, ideal speed can disregard consumption of both Kl terms because both oxygen and food will be resupplied later
 const double doubleResupplySpeed = 1 / cbrt(2 * Kf);
 
-# pragma region Input
+# pragma region INPUT
 
 string toLower(const string &str)
 {
@@ -373,7 +373,7 @@ int parseCSV()
         cout << "CSV Error: The first planet (" << planetName << ") cannot be hostile." << endl;
         return -1;
       }
-      else if (hostileRadius < EPS)
+      else if (hostileRadius <= 0)
       {
         cout << "CSV Error: The hostile radius (" << hostileRadius << ") of hostile planet " << planetName << " (entry " << lineNumber << ") must be positive." << endl;
         return -1;
@@ -411,7 +411,7 @@ int parseCSV()
       PlanetData &planet2 = planets[j];
       double d = calculateDistance(pos, planet2.position), r = planet2.hostileRadius;
       //Unreachable if neutral and lying within hostile radius or hostile and fully enclosed (including radius) in other hostile radius
-      if (r < EPS && d <= hostileRadius)
+      if (r <= 0 && d <= hostileRadius)
       {
         unreachableIndices.insert(j);
         if (j == 0)
@@ -425,7 +425,7 @@ int parseCSV()
           return -1;
         }
       }
-      else if (r > EPS && r <= hostileRadius - d)
+      else if (r > 0 && r <= hostileRadius - d)
       {
         pair<set<int>::iterator, bool> result = unreachableIndices.insert(j);
         if (result.second)
@@ -451,7 +451,7 @@ int parseCSV()
   hostilePlanets.reserve(hostileCount);
   for (PlanetData &planet : planets)
   {
-    if (planet.hostileRadius > EPS)
+    if (planet.hostileRadius > 0)
       hostilePlanets.emplace_back(planet.position, planet.hostileRadius);
   }
   iFile.close();
@@ -460,7 +460,7 @@ int parseCSV()
 
 # pragma endregion
 
-# pragma region Pathfinding
+# pragma region PATHFINDING
 
 //Returns cost (time + resource consumption) of edge connecting two nodes
 double calculateCost(const int node1, const int node2)
@@ -500,7 +500,7 @@ bool edgeInHostileRadius(const int startNode, const int endNode)
   {
     Position &center = planet.position;
     //Circle eq.: (x-x3)^2 + (y-y3)^2 = r^2
-    double x3 = center.x, y3 = center.y, r = planet.radius, dx = x1 - x3, dy = y1 - y3;
+    double x3 = center.x, y3 = center.y, r = planet.radius + BUFFER, dx = x1 - x3, dy = y1 - y3;
     //Plugging line eqs. into circle eq. and applying trig identities yields quadratic a*d^2 + b*d + c = 0
     double b = 2 * dx * cosTheta + 2 * dy * sinTheta, c = dx * dx + dy * dy - r * r; //a=1
     double discriminant = b * b - 4 * c;
@@ -776,7 +776,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 
 # pragma endregion
 
-# pragma region Speed/Resource Optimization
+# pragma region SPEED/RESOURCE OPTIMIZATION
 
 //Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
 double bisection(double a, double b, const double x0, const double y0,
@@ -789,7 +789,7 @@ double bisection(double a, double b, const double x0, const double y0,
   while (fabs(b - a) > tolerance * c)
   {
     double fc = func(c, x0, y0);
-    if (fabs(fc) < EPS)
+    if (fabs(fc) < BUFFER)
       return c;
     if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0))
     {
@@ -1238,7 +1238,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
   {
     int node = path[i];
     double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = Kl * t;
-    foodLeft -= consumed, oxygenLeft -= consumed;
+    oxygenLeft -= consumed, foodLeft -= consumed;
     if (error == 0 && (oxygenLeft < BUFFER || foodLeft < BUFFER))
       error = -1;
     rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
@@ -1258,7 +1258,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
     score += t;
   }
   score -= fuel.back() + oxygen.back() + food.back();
-  if (error == 0 && fuelLeft > BUFFER)
+  if (error == 0 && fuelLeft >= BUFFER)
     return 0;
 
   //Method 2: If Method 1 (set ideal case) fails, adjust all speeds by constant factor
@@ -1274,7 +1274,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       int node = path[i];
       speeds[i] *= speedFactor;
       double speed = speeds[i], distance = nodeDistances[path[i - 1]][node], t = distance / speed, consumed = Kl * t;
-      fuelLeft -= Kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
+      fuelLeft -= Kf * distance * speed * speed, oxygenLeft -= consumed, foodLeft -= consumed;
       if (oxygenLeft < BUFFER || foodLeft < BUFFER || fuelLeft < BUFFER)
       {
         error = -1;
@@ -1364,7 +1364,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       double speed = speeds[i];
       double t = distance / speed;
       double consumed = Kl * t;
-      fuelLeft -= Kf * distance * speed * speed, foodLeft -= consumed, oxygenLeft -= consumed;
+      fuelLeft -= Kf * distance * speed * speed, oxygenLeft -= consumed, foodLeft -= consumed;
       rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
       if (fuelLeft <= 0 || oxygenLeft <= 0 || foodLeft <= 0)
       {
@@ -1396,10 +1396,6 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
   else
     return -2;
 }
-
-# pragma endregion
-
-# pragma region Output/Testing
 
 void printData(const vector<int> &path, const vector<double> &speeds, const vector<double> &fuel, const vector<double> &oxygen,
                const vector<double> &food, const vector<double> &rawOxygen, const vector<double> &rawFood)
@@ -1471,7 +1467,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   cout << endl
        << "Final stats" << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
-  cout << "Total time: " << defaultfloat << setprecision(10) << travelTime << endl;
+  cout << "Total time: " << defaultfloat << setprecision(8) << travelTime << endl;
   cout << "Total Distance: " << travelDistance << endl;
   cout << "Remaining fuel: " << fuelLeft << endl;
   cout << "Remaining oxygen: " << oxygenLeft << endl;
@@ -1479,7 +1475,94 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
 }
 
-//Takes path input, optimizes speed and outputs score data (used to test path optimality)
+# pragma endregion
+
+# pragma region TESTING/DEVELOPMENT FEATURES
+
+//Writes random map to RandomMap.csv with specified parameters (testing pathfinding/resources)
+int generateRandomMap()
+{
+  cout << endl;
+  cout << "Input parameters for random map generation: " << endl;
+  string input;
+  cout << "Planet number: ";
+  getline(cin, input);
+  if (input == "")
+    input = "50";
+  int planetNumber = stoi(input);
+  cout << "Max pos: ";
+  getline(cin, input);
+  if (input == "")
+    input = "100";
+  double maxPos = stod(input);
+  cout << "Max hostile radius: ";
+  getline(cin, input);
+  if (input == "")
+    input = "10";
+  double maxRad = stod(input);
+  cout << "Hostile probability: ";
+  getline(cin, input);
+  if (input == "")
+    input = "0.15";
+  double hosProb = stod(input);
+
+  random_device rd;
+  mt19937 engine(rd());
+  uniform_real_distribution<double> xPos(-maxPos, maxPos);
+  uniform_real_distribution<double> yPos(-maxPos, maxPos);
+  uniform_int_distribution<int> res(0, 2);
+  uniform_real_distribution<double> hos(0, 1);
+  uniform_real_distribution<double> rad(0.1, maxRad);
+
+  ofstream outFile("RandomMap.csv");
+  if (!outFile.is_open())
+  {
+    cout << "Error outputting map to file RandomMap.csv" << endl;
+    return -1;
+  }
+  outFile << "Planet Name,x,y,type,resupply,hostile_radius" << endl;
+  for (int i = 0; i < planetNumber; i++)
+  {
+    double x = xPos(engine), y = yPos(engine);
+    if (i == 0)
+      x = y = maxPos/2;
+    if (i == planetNumber - 1)
+      x = y = -maxPos/2;
+
+    int rand = res(engine);
+    string resupply = "";
+    if (i != 0 && i != planetNumber - 1) //Ensure start/target are not resupplies
+    {
+      if (rand == 1)
+        resupply = "Oxygen";
+      else if (rand == 2)
+        resupply = "Food";
+    }
+
+    string hosType;
+    double hosRad;
+    //Ensure start/target are neutral and outside hostile radius
+    if (hos(engine) <= hosProb && i != 0 && 
+        i != planetNumber - 1 && 
+        calculateDistance(Position(x, y), Position(-maxPos, -maxPos)) > maxRad &&
+        calculateDistance(Position(x, y), Position(maxPos, maxPos)) > maxRad)
+    {
+      hosType = "Hostile";
+      hosRad = rad(engine);
+    }
+    else
+    {
+      hosType = "Neutral";
+      hosRad = 0;
+    }
+    outFile << i << "," << x << "," << y << "," << hosType << "," << resupply << "," << hosRad << endl;
+  }
+  outFile.close();
+  cout << "Map data successfully outputted to RandomMap.csv" << endl;
+  return 0;
+}
+
+//Takes path input, optimizes speed and outputs score data (testing path optimality)
 int testPath(string &xPath, string &yPath)
 {
   string input;
@@ -1517,6 +1600,8 @@ int testPath(string &xPath, string &yPath)
   double score = INF;
   if (optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood) == 0)
     printData(path, speeds, fuel, oxygen, food, rawOxygen, rawFood);
+  else
+    cout << "Invalid path (resources run out)" << endl;
   for (int i = 0; i < pathLength; i++)
   {
     xPath += "," + to_string(planets[path[i]].position.x);
@@ -1524,8 +1609,7 @@ int testPath(string &xPath, string &yPath)
   }
   return 0;
 }
-
-//Takes path and speed input, outputs raw score data (used to test data calcuation)
+//Takes path and speed input, outputs raw score data (testing data calcs)
 int rawTestPath(string &xPath, string &yPath)
 {
   string input, input2;
@@ -1587,6 +1671,7 @@ int rawTestPath(string &xPath, string &yPath)
       previousNode[1] = MaxOxygen;
       previousNode[2] = MaxFood;
     }
+    //Use raw calculated distance (not cached) for testing
     double v = speeds[i], t, o, fo, d = calculateDistance(planets[node0].position, planet.position);
     switch (planet.resupply)
     {
@@ -1646,74 +1731,42 @@ int rawTestPath(string &xPath, string &yPath)
   return 0;
 }
 
-int generateRandomMap()
+# pragma endregion
+
+void calculateResources(const vector<int> &path, vector<double> &speeds, vector<double> &fuel, vector<double> &oxygen,
+                        vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
-  cout << endl;
-  cout << "Input parameters for random map generation: " << endl;
-  string input;
-  cout << "Planet number: ";
-  getline(cin, input);
-  int planetNumber = stoi(input);
-  cout << "Max pos: ";
-  getline(cin, input);
-  double maxPos = stod(input);
-  cout << "Max hostile radius: ";
-  getline(cin, input);
-  double maxRad = stod(input);
-  cout << "Hostile probability: ";
-  getline(cin, input);
-  double hosProb = stod(input);
-
-  random_device rd;
-  mt19937 engine(rd());
-  uniform_real_distribution<double> xPos(-maxPos, maxPos);
-  uniform_real_distribution<double> yPos(-maxPos, maxPos);
-  uniform_int_distribution<int> res(0, 2);
-  uniform_real_distribution<double> hos(0, 1);
-  uniform_real_distribution<double> rad(0.1, maxRad);
-
-  ofstream outFile("RandomMap.csv");
-  if (!outFile.is_open())
+  int pathLength = path.size();
+  speeds = vector<double>(pathLength, idealSpeed), fuel = vector<double>(pathLength), oxygen = vector<double>(pathLength), food = vector<double>(pathLength), rawOxygen = vector<double>(pathLength), rawFood = vector<double>(pathLength);
+  double fuelLeft = MaxFuel, oxygenLeft = MaxOxygen, foodLeft = MaxFood;
+  for (int i = 1; i < pathLength; i++)
   {
-    cout << "Error outputting map to file RandomMap.csv" << endl;
-    return -1;
-  }
-  outFile << "Planet Name,x,y,type,resupply,hostile_radius" << endl;
-  for (int i = 0; i < planetNumber; i++)
-  {
-    double x = xPos(engine), y = yPos(engine);
-    if (i == 0)
-      x = y = -maxPos;
-    if (i == planetNumber - 1)
-      x = y = maxPos;
+    int node = path[i];
+    double speed = idealSpeed;
+    double d = nodeDistances[path[i - 1]][node];
 
-    int rand = res(engine);
-    string resupply = "";
-    if (i != 0 && i != planetNumber - 1)
-    {
-      if (rand == 1)
-        resupply = "Oxygen";
-      else if (rand == 2)
-        resupply = "Food";
-    }
+    double t = d / speed;
+    double fuelConsumed = Kf * d * speed * speed;
+    double consumed = Kl * t; // Oxygen/food consumed
 
-    string hosType;
-    double hosRad;
-    if (hos(engine) <= hosProb && i != 0 && i != planetNumber - 1)
+    fuelLeft -= fuelConsumed;
+    oxygenLeft -= consumed;
+    foodLeft -= consumed, 
+
+    rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
+    switch (planets[node].resupply)
     {
-      hosType = "Hostile";
-      hosRad = rad(engine);
+    case OXYGEN:
+      oxygenLeft = MaxOxygen;
+      break;
+    case FOOD:
+      foodLeft = MaxFood;
+      break;
+    default:
+      break;
     }
-    else
-    {
-      hosType = "Neutral";
-      hosRad = 0;
-    }
-    outFile << i << "," << x << "," << y << "," << hosType << "," << resupply << "," << hosRad << endl;
+    fuel[i] = fuelLeft, oxygen[i] = oxygenLeft, food[i] = foodLeft;
   }
-  outFile.close();
-  cout << "Map data successfully outputted to RandomMap.csv" << endl;
-  return 0;
 }
 
 int main(int argc, char *argv[])
@@ -1724,28 +1777,28 @@ int main(int argc, char *argv[])
   static struct option long_options[] =
   {
     {"map", required_argument, 0, 'm'},           //Input map file name (with extension)
-    {"pathFactor", required_argument, 0, 'p'},    //pathFactor * nodeCount = paths to generate each batch (default 5)
-    {"inputPath", required_argument, 0, 't'},     //Tests inputted path and speeds (inputPath=1,3) or tests and optimizes speeds on inputted path (inputPath=2,3)
-    {"plotMap", required_argument, 0, 'g'},       //Output graph and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in same folder)
+    {"pathFactor", required_argument, 0, 'f'},    //pathFactor * nodeCount = paths to generate each batch (default 5)
+    {"inputPath", required_argument, 0, 'p'},     //Tests inputted path and speeds (inputPath=1,3) or tests and optimizes speeds on inputted path (inputPath=2,3)
+    {"plotGraph", required_argument, 0, 'g'},     //Outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in same folder and python3 is installed)
     {"randomMap", required_argument, 0, 'r'},     //Generates random map in RandomMap.csv with specified paremeters
     {"distanceScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distanceScale
     {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:p:t:g:r:d:", long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:f:p:g:r:d:", long_options, &index)) != -1)
   {
     switch (opt)
     {
     case 'm':
       fileName = optarg;
       break;
-    case 'p':
+    case 'f':
       pathFactor = atof(optarg);
       break;
-    case 't':
+    case 'p':
       inputPath = atoi(optarg);
       break;
     case 'g':
-      plotMap = atoi(optarg);
+      plotGraph = atoi(optarg);
       break;
     case 'r':
       randomMap = atoi(optarg);
@@ -1791,7 +1844,8 @@ int main(int argc, char *argv[])
   else if (batchSize > 500)
     batchSize = 500;
   vector<vector<int>> bestPaths;
-  vector<int> bestPath;
+  vector<int> bestPath, fbPath; //Fallback path if no valid best path is found
+  vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
   bool validPath = true;
   //Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
   //If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
@@ -1800,16 +1854,16 @@ int main(int argc, char *argv[])
   {
     if (yens(bestPaths, batchSize) == -1)
     {
-      //No more valid paths remaining
-      cout << "Mission failed: Valid path could not be found. Please try a different map." << endl;
+      calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+      printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
       validPath = false;
+      cout << endl << "INVALID PATH: Please try a different map." << endl;
       break;
     }
     else
     {
       double bestScore = INF;
       double score;
-      vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
       int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int)bestPaths.size());
       for (int j = startBatch; j < endBatch; j++) //Only optimize out of paths in current batch for efficiency
       {
@@ -1822,26 +1876,21 @@ int main(int argc, char *argv[])
         score = INF;
         error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
         if (error == 0 && score < bestScore)
-        {
-          bestScore = score;
-          bestPath = path;
-          bestSpeeds = speeds;
-          bestFuel = fuel;
-          bestOxygen = oxygen;
-          bestFood = food;
-          bestRawOxygen = rawOxygen;
-          bestRawFood = rawFood;
-        }
+          bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood;
       }
       if (bestScore < INF)
       {
         printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
         break;
       }
+      else if (i == 0)
+        fbPath = bestPaths.back();
       else if (i == maxIterations - 1)
       {
-        cout << "Mission failed: Valid path could not be found. Please try a different map." << endl;
+        calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
         validPath = false;
+        cout << endl << "INVALID PATH: Please try a different map." << endl;
       }
     }
   }
@@ -1849,8 +1898,8 @@ int main(int argc, char *argv[])
   double milliseconds = calcTime / 1000.0;
   cout << endl << "Calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
 
-  //Output graph and path data to PlotterData.csv for testing
-  if (plotMap > 0)
+  //Output map and path data to PlotterData.csv for testing
+  if (plotGraph > 0)
   {
     string xEndpt = "", yEndpt = "", xNone = "", yNone = "", xFood = "", yFood = "", xOxygen = "", yOxygen = "", xHostile = "", yHostile = "", rHostile = "", xPath = "", yPath = "";
     for (int i = 0; i < nodeCount; i++)
@@ -1971,5 +2020,3 @@ int main(int argc, char *argv[])
     }
   }
 }
-
-# pragma endregion
