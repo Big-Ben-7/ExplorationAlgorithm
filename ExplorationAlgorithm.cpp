@@ -24,7 +24,7 @@ using namespace std;
 #define EPSILON std::numeric_limits<double>::epsilon()
 
 // Command line options
-int maxPaths = 2000;
+int maxTime = 60;
 int pathFactor = 5;
 double distanceScale = 1.0;
 int testMode = 0;
@@ -160,7 +160,7 @@ bool isValidPlanet(const string &planetName)
   {
     if (isalnum(c))
     {
-        alphanumeric = true;
+      alphanumeric = true;
       continue;
     }
     switch (c)
@@ -654,12 +654,15 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
 int yens(vector<vector<int>> &bestPaths, int pathCount)
 {
   vector<int> bestPath, sameRootPaths, rootPath, spurPath, totalPath;
-  int rv;
-  rv = bidirectionAStar(bestPath, 0, lastNodeIndex);
-  if (rv == -1)
-    return -1;
-  bestPaths.push_back(bestPath); // Find best path from source (Earth) to sink (Target)
-  set<Path> potentialPaths;      // Use set to avoid duplicates and automatic sorting
+  int initialSize = bestPaths.size();
+  if (initialSize == 0)
+  {
+    // Find best path from source (Earth) to sink (Target)
+    if (bidirectionAStar(bestPath, 0, lastNodeIndex) == -1)
+      return -1;
+    bestPaths.push_back(bestPath);
+  }
+  set<Path> potentialPaths; // Use set to avoid duplicates and automatic sorting
   for (int k = 1; k < pathCount; k++)
   {
     vector<int> &lastBestPath = bestPaths.back();
@@ -673,17 +676,19 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       for (int j = 0; j < bestPathsCount; j++)
       {
         vector<int> &path = bestPaths[j];
+        // Remove edges from spur nodes of other paths sharing same same root to prevent duplicate paths
         if (rootPath.size() <= path.size() && equal(rootPath.begin(), rootPath.end(), path.begin()))
         {
           sameRootPaths.push_back(j);
-          nodeCosts[path[i]][path[i+1]] = INF; // Remove edges from spur nodes of other paths sharing same same root to prevent duplicate paths
+          nodeCosts[path[i]][path[i + 1]] = INF;
         }
       }
       for (int j = 0; j < i; j++)
       {
+        // Remove all nodes in root path from graph to prevent cycles
         int node = lastBestPath[j];
         for (int m = 0; m < nodeCount; m++)
-          nodeCosts[node][m] = nodeCosts[m][node] = INF; // Remove all nodes in root path from graph to prevent cycles
+          nodeCosts[node][m] = nodeCosts[m][node] = INF;
       }
       int spurNode = lastBestPath[i]; // Retrieve spur node from previous shortest path
       spurPath.clear();
@@ -694,7 +699,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       for (int j = 0; j < sameRootCount; j++)
       {
         vector<int> &path = bestPaths[sameRootPaths[j]];
-        int node1 = path[i], node2 = path[i+1];
+        int node1 = path[i], node2 = path[i + 1];
         nodeCosts[node1][node2] = initialCosts[node1][node2];
       }
       for (int j = 0; j < i; j++)
@@ -706,7 +711,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
           nodeCosts[m][node] = initialCosts[m][node];
         }
       }
-      
+
       if (error == -1)
         continue;
       totalPath = rootPath;
@@ -725,13 +730,15 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
     bestPaths.push_back(path.path);
     potentialPaths.erase(it);
   }
+  if (bestPaths.size() == initialSize)
+    return -1; // Did not find any new best paths
   return 0;
 }
 
 /************************************************************ Speed/Resource optimization ************************************************************/
 
 // Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
-double bisection(double a, double b, const double x0, const double y0, 
+double bisection(double a, double b, const double x0, const double y0,
                  double (*func)(const double, const double, const double), const double tolerance = 1e-6)
 {
   double c;
@@ -1092,7 +1099,7 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
 }
 
 // Optimizes speed/resource usage on path with 3 methods (which increase in both robustness and computation time)
-int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel, 
+int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel,
                  vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
   int error = 0;
@@ -1609,10 +1616,10 @@ int main(int argc, char *argv[])
   static struct option long_options[] =
   {
       {"map", required_argument, 0, 'm'},           // Input map
-      {"maxPaths", required_argument, 0, 's'},      // Max number of best paths to generate with Yen's algorithm
-      {"pathFactor", required_argument, 0, 'g'},    // nodeCount * pathFactor = paths to generate, capped at maxPaths
-      {"test", required_argument, 0, 't'},          // Test mode (plots graph with Matplotlib, raw tests specific path)
-      {"distanceScale", required_argument, 0, 'c'}, // Scales all planet distances by constant factor distanceScale
+      {"maxTime", required_argument, 0, 't'},       // Max time in seconds until program times out (default 60)
+      {"pathFactor", required_argument, 0, 'p'},    // pathFactor * nodeCount = paths to generate each batch (default 5)
+      {"test", required_argument, 0, 'x'},          // Test mode (plots graph with Matplotlib, raw tests specific path)
+      {"distanceScale", required_argument, 0, 'd'}, // Scales all planet distances by constant factor distanceScale
       {0, 0, 0, 0}
   };
   while ((opt = getopt_long(argc, argv, "m:", long_options, &index)) != -1)
@@ -1622,16 +1629,16 @@ int main(int argc, char *argv[])
     case 'm':
       fileName = optarg;
       break;
-    case 's':
-      maxPaths = atoi(optarg);
+    case 't':
+      maxTime = atoi(optarg);
       break;
-    case 'g':
+    case 'p':
       pathFactor = atoi(optarg);
       break;
-    case 't':
+    case 'x':
       testMode = atoi(optarg);
       break;
-    case 'c':
+    case 'd':
       distanceScale = atof(optarg);
       break;
     default:
@@ -1664,51 +1671,65 @@ int main(int argc, char *argv[])
 
   // Pathfinding and speed/resource optimization
   initializeLists();
-  int pathCount = pathFactor * nodeCount; // Number of best paths for Yen's algorithm to generate
-  if (pathCount > maxPaths)
-    pathCount = maxPaths;
-  else if (pathCount < 50)
+  int pathCount = pathFactor * nodeCount;
+  if (pathCount < 50)
     pathCount = 50;
+  else if (pathCount > 500)
+    pathCount = 500;
   vector<vector<int>> bestPaths;
   vector<int> bestPath;
   bool validPath = true;
-  if (yens(bestPaths, pathCount) == -1) // Fills bestPaths with pathCount approximately best paths
+  // Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
+  // If no valid path is found, generates another batch of next pathCount best paths until valid path is found or time exceeds maxTime
+  int maxIterations = maxTime * 1000 / pathCount; // Assuming ~0.1s per batch of size 100 on average
+  for (int i = 0; i < maxIterations; i++)
   {
-    cout << "Mission failed: Valid path could not be found. Please try a different map." << endl;
-    validPath = false;
-  }
-  else // Optimizes speed for each path in bestPaths and selects the best out of them for output
-  {
-    double bestScore = INF;
-    double score;
-    vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
-    for (auto &path : bestPaths)
+    startTime = chrono::steady_clock::now();
+    if (yens(bestPaths, pathCount) == -1)
     {
-      int pathLength = path.size();
-      if (pathLength < 2)
-        continue;
-      vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength), rawOxygen(pathLength), rawFood(pathLength);
-      fuel[0] = MAX_FUEL, oxygen[0] = MAX_OXYGEN, food[0] = MAX_FOOD;
-      score = INF;
-      error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
-      if (error == 0 && score < bestScore)
-      {
-        bestScore = score;
-        bestPath = path;
-        bestSpeeds = speeds;
-        bestFuel = fuel;
-        bestOxygen = oxygen;
-        bestFood = food;
-        bestRawOxygen = rawOxygen;
-        bestRawFood = rawFood;
-      }
-    }
-    if (bestScore < INF)
-      printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-    else
-    {
+      // No more valid paths remaining
       cout << "Mission failed: Valid path could not be found. Please try a different map." << endl;
       validPath = false;
+      break;
+    }
+    else
+    {
+      double bestScore = INF;
+      double score;
+      vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
+      int startBatch = pathCount * i, endBatch = min(startBatch + pathCount, (int) bestPaths.size());
+      for (int j = startBatch; j < endBatch; j++) // Only optimize out of paths in current batch for efficiency
+      {
+        vector<int> &path = bestPaths[j];
+        int pathLength = path.size();
+        if (pathLength < 2)
+          continue;
+        vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength), rawOxygen(pathLength), rawFood(pathLength);
+        fuel[0] = MAX_FUEL, oxygen[0] = MAX_OXYGEN, food[0] = MAX_FOOD;
+        score = INF;
+        error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
+        if (error == 0 && score < bestScore)
+        {
+          bestScore = score;
+          bestPath = path;
+          bestSpeeds = speeds;
+          bestFuel = fuel;
+          bestOxygen = oxygen;
+          bestFood = food;
+          bestRawOxygen = rawOxygen;
+          bestRawFood = rawFood;
+        }
+      }
+      if (bestScore < INF)
+      {
+        printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        break;
+      }
+      else if (i == maxIterations - 1)
+      {
+        cout << "Mission failed: Valid path could not be found. Please try a different map." << endl;
+        validPath = false;
+      }
     }
   }
   long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
