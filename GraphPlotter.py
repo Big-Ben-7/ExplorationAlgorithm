@@ -3,7 +3,7 @@ from matplotlib.patches import Circle
 import csv
 #xEndpt, yEndpt, xNone, yNone, xOxygen, yOxygen, xFood, yFood, xHostile, yHostile, rHostile
 data = []
-with open("PlotData.csv", mode='r', newline = '') as file:
+with open("PlotterData.csv", mode='r', newline = '') as file:
     reader = csv.reader(file)
     for row in reader:
         rowData = [float(element) for element in row]
@@ -46,5 +46,4 @@ ax.set_aspect('equal', 'box')
 plt.title('Data')
 plt.xlabel('x')
 plt.ylabel('y')
-plt.legend(loc='upper left')
 plt.show()
