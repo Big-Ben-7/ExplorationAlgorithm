@@ -391,7 +391,7 @@ int parseCSV()
   }
   nodeCount = lineNumber - 1, lastNodeIndex = lineNumber - 2;
 
-  // Remove unreachable planets (lying inside hostile radius)
+  // Remove unreachable planets
   set<int, greater<int>> unreachableIndices;
   int hostileCount = hostileIndices.size();
   for (int i : hostileIndices)
@@ -404,6 +404,7 @@ int parseCSV()
       if (i == j) continue;
       PlanetData &planet2 = planets[j];
       double d = calculateDistance(pos, planet2.position), r = planet2.hostileRadius;
+      // Unreachable if neutral and lying within hostile radius or hostile and fully enclosed (including radius) in other hostile radius
       if ((r < EPSILON && d <= hostileRadius) || (r > EPSILON && r <= hostileRadius - d))
       {
         unreachableIndices.insert(j);
