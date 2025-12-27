@@ -32,7 +32,7 @@ using namespace std;
 #define MaxFuel 3000
 #define MaxOxygen 2000
 #define MaxFood 2000
-#define BUFFER 1e-10
+#define BUFFER 1e-12
 #define INF numeric_limits<double>::infinity()
 #define EPS std::numeric_limits<double>::epsilon()
 
@@ -1057,17 +1057,11 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
   {
     if (fabs(bs[i].xb) < EPS)
     {
-      if (bs[i].yb >= 1)
-        thetaMin = M_PI_2;
-      else
-        thetaMin = max(thetaMin, asin(bs[i].yb));
+      bs[i].yb >= 1 ? thetaMin = M_PI_2 : thetaMin = max(thetaMin, asin(bs[i].yb));
     }
     else if (fabs(bs[i].yb) < EPS)
     {
-      if (bs[i].xb >= 1)
-        thetaMax = 0.0;
-      else
-        thetaMax = min(thetaMax, acos(bs[i].xb));
+      bs[i].xb >= 1 ? thetaMax = 0.0 : thetaMax = min(thetaMax, acos(bs[i].xb));
     }
     else
     {
@@ -1427,7 +1421,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
        << "PROGRAM OUTPUT" << endl;
   cout << "Map name: " << mapName << endl;
   cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl;
-  cout << "Note: Some values are in scientific notation for consistent formatting (e.g., 6.67e-02 = 6.67*10^(-2) = 0.0667)" << endl
+  cout << "* Note: Some values are in scientific notation for consistent formatting (e.g., 6.67e-02 = 0.0667)" << endl
        << endl;
   cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(12) << "Distance |" << setw(12) << "Time |" << setw(12) << "Fuel |" << setw(10) << "Oxygen" << setw(8) << "Res. |" << setw(10) << "Food" << setw(8) << "Res. |" << setw(13) << "Score |" << endl;
   cout << scientific << setprecision(3);
