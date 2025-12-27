@@ -1,13 +1,16 @@
 /* 
  * TSA Coding 2025-2026: Exploration Algorithm
  * Team 2098-901
- *
- * The following resources from the USACO guide were referenced for c++ data structures and graph theory:
- * 1. Principles of Algorithmic Problem Solving: https://usaco.guide/PAPS.pdf
- * 2. Competitive Programmer's Handbook: https://usaco.guide/CPH.pdf
- * 3. USACO guide website: https://usaco.guide/general/data-types?lang=cpp
- * (Obviously no AI was used in the making of this project)
+ * Language: C++20 (chosen for efficiency)
  * 
+ * The following algorithms were implemented in our program:
+ * 1. Bidirectional A* (for pathfinding)
+ * 2. Yen's algorithm (for pathfinding)
+ * 3. Bisection method (for root-finding)
+ * 4. Brent's method (for minimization)
+ * As per the TSA event guide rules, only the C++ standard library (std) was used
+ * (Obviously no AI was used in the making of this project)
+ *
  * Note: since this program is kind of long, our team organized it into regions and added descriptive comments to improve readability
  */
 
