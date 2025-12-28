@@ -1595,30 +1595,30 @@ int generateRandomMap()
   cout << endl;
   cout << "Input parameters for random map generation: " << endl;
   string input;
-  cout << "Planet number: ";
+  cout << "Planet number (return for default of 20): ";
   getline(cin, input);
   if (input == "")
-    input = "50";
+    input = "20";
   int planetNumber = stoi(input);
-  cout << "Max pos: ";
+  cout << "Max pos (return for default of 100): ";
   getline(cin, input);
   if (input == "")
     input = "100";
   double maxPos = stod(input);
-  cout << "Max hostile radius: ";
+  cout << "Max hostile radius (return for default of 10): ";
   getline(cin, input);
   if (input == "")
     input = "10";
   double maxRad = stod(input);
-  cout << "Hostile probability: ";
+  cout << "Hostile probability (return for default of 0.2): ";
   getline(cin, input);
   if (input == "")
-    input = "0.15";
+    input = "0.2";
   double hosProb = stod(input);
 
   random_device rd;
   mt19937 engine(rd());
-  uniform_real_distribution<double> xPos(-maxPos, maxPos);
+  uniform_real_distribution<double> xPos(0, maxPos);
   uniform_real_distribution<double> yPos(-maxPos, maxPos);
   uniform_int_distribution<int> res(0, 2);
   uniform_real_distribution<double> hos(0, 1);
@@ -1635,9 +1635,9 @@ int generateRandomMap()
   {
     double x = xPos(engine), y = yPos(engine);
     if (i == 0)
-      x = y = maxPos/2;
+      x = y = 0;
     if (i == planetNumber - 1)
-      x = y = -maxPos/2;
+      x = maxPos, y = 0;
 
     int rand = res(engine);
     string resupply = "";
@@ -1654,8 +1654,8 @@ int generateRandomMap()
     //Ensure start/target are neutral and outside hostile radius
     if (hos(engine) <= hosProb && i != 0 && 
         i != planetNumber - 1 && 
-        calculateDistance(Position(x, y), Position(-maxPos, -maxPos)) > maxRad &&
-        calculateDistance(Position(x, y), Position(maxPos, maxPos)) > maxRad)
+        calculateDistance(Position(x, y), Position(0, 0)) > maxRad &&
+        calculateDistance(Position(x, y), Position(maxPos, 0)) > maxRad)
     {
       hosType = "Hostile";
       hosRad = rad(engine);
@@ -1973,7 +1973,7 @@ int main(int argc, char *argv[])
       else
       {
         validPath = false;
-        cout << "Could not find a valid path. Please try a different map." << endl;
+        cout << endl << "Could not find a valid path. Please try a different map." << endl;
       }
       break;
     }
@@ -2013,7 +2013,7 @@ int main(int argc, char *argv[])
         else
         {
           validPath = false;
-          cout << "Could not find a valid path. Please try a different map." << endl;
+          cout << endl << "Could not find a valid path. Please try a different map." << endl;
         }
       }
     }
