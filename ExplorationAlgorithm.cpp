@@ -100,19 +100,7 @@ struct Path
     return cost < other.cost;   //Sort by cost in Yen's algorithm set
   }
 };
-//Used to test different combinations of speeds in speed optimization
-struct BestSlope
-{
-  int index;
-  double slope;
-  double score;
-  double v1, v2;
-  BestSlope()
-  {
-    index = -1;
-    score = INF;
-  }
-};
+
 //Represents constraint boundary curve in speed optimization
 struct Boundary
 {
@@ -121,6 +109,24 @@ struct Boundary
   {
     xb = x;
     yb = y;
+  }
+};
+
+struct SlopeOptimizeData
+{
+  double fuel0, mvx, mvy;
+  vector<Boundary> bs;
+  double v1, v2;
+  int error;
+  SlopeOptimizeData(double f, double x, double y, vector<Boundary> b)
+  {
+    fuel0 = f;
+    mvx = x;
+    mvy = y;
+    bs = b;
+    v1 = 0.0;
+    v2 = 0.0;
+    error = 0;
   }
 };
 
@@ -779,16 +785,15 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 # pragma region SPEED/RESOURCE OPTIMIZATION
 
 //Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
-double bisection(double a, double b, const double x0, const double y0,
-                 double (*func)(const double, const double, const double), const double tolerance = 1e-6)
+double bisection(double a, double b, void *args, double (*func)(double, void *), const double tolerance = 1e-6)
 {
   double c;
   c = 0.5 * (a + b);
-  double fa = func(a, x0, y0);
-  double fb = func(b, x0, y0);
+  double fa = func(a, args);
+  double fb = func(b, args);
   while (fabs(b - a) > tolerance * c)
   {
-    double fc = func(c, x0, y0);
+    double fc = func(c, args);
     if (fabs(fc) < BUFFER)
       return c;
     if ((fa < 0 && fc < 0) || (fa > 0 && fc > 0))
@@ -807,15 +812,18 @@ double bisection(double a, double b, const double x0, const double y0,
 }
 
 //Equations to find intersection of boundary curves
-double func(const double theta, const double x0, const double y0)
+double func(double theta, void *args)
 {
+  Boundary *fa = (Boundary *) args;
   double cosTheta = cos(theta), sinTheta = sin(theta);
-  return x0 * sinTheta + y0 * cosTheta - sinTheta * cosTheta;
+  return fa->xb * sinTheta + fa->yb * cosTheta - sinTheta * cosTheta;
 }
-double derivFunc(const double theta, const double x0, const double y0)
+
+double derivFunc(double theta, void *args)
 {
+  Boundary *fa = (Boundary *) args;
   double cosTheta = cos(theta), sinTheta = sin(theta);
-  return x0 * cosTheta - y0 * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
+  return fa->xb * cosTheta - fa->yb * sinTheta - (cosTheta * cosTheta - sinTheta * sinTheta);
 }
 
 //Optimizes speed solution along line of slope m (see optimizeSpeed())
@@ -865,22 +873,26 @@ int getIdealSpeed(double &v1, double &v2, double &score, const double m,
   return returnVal;
 }
 
+double slopeOptimizeFun(double x, void *arg)
+{
+  SlopeOptimizeData *a = (SlopeOptimizeData *) arg;
+  double s= tan(x);
+  double b = a->mvx + a->mvy/s;
+  double c = a->fuel0*(1 + s*s);
+  double r;
+  a->error = getIdealSpeed(a->v1, a->v2, r, s, b, c, a->bs);
+  if (a->error != 0) r = INF;
+  return r;
+}
+
 //Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find best speeds (see optimizeSpeed())
-int minimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
-                  const double fuel0, const double mvx, const double mvy, const vector<Boundary> &bs,
-                  const double tolerance = 1e-6, const int maxIter = 500)
+int minimize(double &xm, double &fm, double a, double b,
+	     void *arg, double (*fun)(double, void *), const double tolerance = 1e-8, const int maxIter = 500)
 {
   //Initialize bracketing points
-  double bb, cc, s;
   int returnVal;
   double x = a + phi * (b - a);
-  s = tan(x);
-  bb = mvx + mvy / s;
-  cc = fuel0 + fuel0 * s * s;
-  double fx;
-  returnVal = getIdealSpeed(v1, v2, fx, s, bb, cc, bs);
-  if (returnVal < 0)
-    fx = INF;
+  double fx = fun(x, arg);
   double w = x, fw = fx; //w is previous best point
   double v = x, fv = fx; //v is previous of previous best point
   double d = 0.0;        //Current step
@@ -937,13 +949,7 @@ int minimize(double &xm, double &fm, double &v1, double &v2, double a, double b,
 
     //Evaluate function at new point
     double u = (fabs(d) >= tol1) ? (x + d) : (x + ((d > 0.0) ? tol1 : -tol1));
-    double fu;
-    s = tan(u);
-    bb = mvx + mvy / s;
-    cc = fuel0 + fuel0 * s * s;
-    returnVal = getIdealSpeed(v1, v2, fu, s, bb, cc, bs);
-    if (returnVal < 0)
-      fu = INF;
+    double fu = fun(u, arg);
     //Update bracketing triplet
     if (fu <= fx)
     {
@@ -1073,9 +1079,9 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
     {
       //Determines the intersection point of curves using root-finding algorithm (bisection)
       //Find minimum using 1st Derivative Test to determine interval of root (required for bisection)
-      double tm = bisection(0, M_PI_2, bs[i].xb, bs[i].yb, derivFunc);
-      thetaMin = max(thetaMin, bisection(0, tm, bs[i].xb, bs[i].yb, func));
-      thetaMax = min(thetaMax, bisection(tm, M_PI_2, bs[i].xb, bs[i].yb, func));
+      double tm = bisection(0, M_PI_2, &bs[i], derivFunc);
+      thetaMin = max(thetaMin, bisection(0, tm, &bs[i], func));
+      thetaMax = min(thetaMax, bisection(tm, M_PI_2, &bs[i], func));
       //Tightest thetaMin/thetaMax is used (to satisfy every constraint)
     }
     if (thetaMin >= thetaMax)
@@ -1111,8 +1117,11 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
   double mvy = my * vy;
   double sb = INF;
   double v1b = 0.0, v2b = 0.0;
-  minimize(s, sb, v1b, v2b, thetaMin, thetaMax, fuel0, mvx, mvy, bs);
-
+  SlopeOptimizeData arg(fuel0, mvx, mvy, bs);
+  minimize(s, sb, thetaMin, thetaMax, &arg, slopeOptimizeFun);
+  v1b = arg.v1;
+  v2b = arg.v2;
+  
   //Test solution against ideal slope as a final check (needed if min could not be found)
   idealSlope = tan(idealTheta);
   double minSlope = tan(thetaMin);
@@ -1133,6 +1142,43 @@ int optimizeSpeed(const int i0, const int im, const int i1, const vector<int> &p
   return returnVal;
 }
 
+double scoreFun(const vector<int>& path, vector<double>& speeds, int lastOxygen, int lastFood,
+		vector<double>& jac, vector<double>& djac)
+{
+  int pathLength = path.size();
+  double score = 0.0;
+  jac.assign(pathLength, 0.0);
+  djac.assign(pathLength, 0.0);
+  for (int i = 1; i < pathLength; i++)
+  {
+    double distance = nodeDistances[path[i-1]][path[i]];
+    double speed = speeds[i];
+    double t = distance/speed;
+    double tos = t/speed;
+    double tos2 = 2*tos/speed;
+    score += t;
+    jac[i] += -tos;
+    djac[i] += tos2;
+    score += Kf*distance*speed*speed;
+    jac[i] += 2*Kf*distance*speed;
+    djac[i] += 2*Kf*distance;
+    if (i > lastOxygen)
+    {
+      score += Kl*t;
+      jac[i] -= tos;
+      djac[i] += tos2;
+    }
+    if (i > lastFood)
+    {
+      score += Kl*t;
+      jac[i] -= tos;
+      djac[i] += tos2;
+    }
+  }
+  score -= MaxFuel + MaxFood + MaxOxygen;
+  return score;
+}
+
 //Optimizes speed/resource usage on path with 3 methods (which increase in both robustness and computation time)
 int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel,
                  vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
@@ -1141,6 +1187,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
   bool foundOxygenResupply = false, foundFoodResupply = false;
   int pathLength = path.size();
   vector<double> mb(pathLength);
+  int lastOxygen = 0, lastFood = 0;
 
   //Method 1: set ideal speed by disregarding both, one, or none of the Kl terms if node is before both, one or none of the last resupply types
   for (int i = pathLength - 1; i >= 1; i--)
@@ -1151,6 +1198,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
     case OXYGEN:
       if (!foundOxygenResupply)
       {
+	lastOxygen = i;
         foundOxygenResupply = true;
         if (!foundFoodResupply)
         {
@@ -1180,6 +1228,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
     case FOOD:
       if (!foundFoodResupply)
       {
+	lastFood = i;
         foundFoodResupply = true;
         if (!foundOxygenResupply)
         {
@@ -1278,7 +1327,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       if (oxygenLeft < BUFFER || foodLeft < BUFFER || fuelLeft < BUFFER)
       {
         error = -1;
-        break;
+        //break;
       }
       rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
       switch (planets[node].resupply)
@@ -1309,7 +1358,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       if (minSpeed > maxSpeed)
       {
         error = -1;
-        break;
+        minSpeed = maxSpeed;
       }
       if (speed < minSpeed)
       {
@@ -1322,7 +1371,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       if (oxygenLeft < BUFFER || foodLeft < BUFFER || fuelLeft < BUFFER)
       {
         error = -1;
-        break;
+	break;
       }
       rawOxygen[i] = oxygenLeft, rawFood[i] = foodLeft;
       switch (planets[node].resupply)
@@ -1346,10 +1395,54 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
 
   //Method 3: If Method 2 (constant factor) fails, optimize each node's speeds using a combination of algorithmic, analytical, and graphical means
   double prevScore = INF;
+  vector<double> speeds0, fuel0, oxygen0, food0;
+  double fuelLeft0, oxygenLeft0, foodLeft0;
+  vector<double> jac(pathLength), djac(pathLength);
+  double dsr = 1.2, dsc = 1.0, mja = 1e-5, mdv = 0.75, mds = 0.025;
   //Iterate until solution is self-consistent (speed converges), guarantees correctness despite approximations
   //Capped at 10 iterations to prevent infinite loop, always converged earlier in testing
   for (int iter = 0; iter < 10; iter++)
   {
+    if (iter > 0)
+    {
+      speeds0 = speeds;
+      fuel0 = fuel;
+      oxygen0 = oxygen;
+      food0 = food;
+      fuelLeft0 = fuelLeft;
+      oxygenLeft0 = oxygenLeft;
+      foodLeft0 = foodLeft;
+      score = scoreFun(path, speeds, lastOxygen, lastFood, jac, djac);
+      double ds = mds*fabs(score);
+      double dv = 0.0, jdv = 0.0;
+      for (int i = 1; i < pathLength; i++)
+	{
+	  jdv = 0.0;
+	  dv = 0.0;
+	  if (fabs(djac[i]) > mja)
+	    {
+	      jdv = min(1.0,dsc)*jac[i]/djac[i];
+	    }
+	  if (fabs(jac[i]) > mja)
+	    {
+	      dv = dsc*ds/jac[i];
+	    }
+	  if (dv*jdv > 1e-16)
+	    {
+	      if (fabs(dv) > fabs(jdv))
+		{
+		  dv = jdv;
+		}
+	      double adv = fabs(dv);
+	      double rv = mdv*speeds[i];
+	      if (adv > rv)
+		{
+		  dv *= rv/adv;
+		}
+	      speeds[i] -= dv;
+	    }
+	}
+    }
     score = 0.0;
     fuelLeft = MaxFuel, oxygenLeft = MaxOxygen, foodLeft = MaxFood;
     for (int i = 1; i < pathLength; i++)
@@ -1369,6 +1462,7 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       if (fuelLeft <= 0 || oxygenLeft <= 0 || foodLeft <= 0)
       {
         error = -1;
+	score = INF;
         break;
       }
       switch (planets[node].resupply)
@@ -1386,11 +1480,27 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       score += t;
     }
     score -= fuel.back() + oxygen.back() + food.back();
-    double ds = max(0.01, fabs(score) * 5e-3);
-    if (fabs(score - prevScore) < ds)
-      break;
+    if (score > prevScore)
+    {
+      dsc /= dsr;
+      speeds = speeds0;
+      fuel = fuel0;
+      oxygen = oxygen0;
+      food = food0;
+      fuelLeft = fuelLeft0;
+      oxygenLeft = oxygenLeft0;
+      foodLeft = foodLeft0;
+      score = prevScore;
+      if (dsc < 0.1) break;
+    }
+    else if (iter > 0)
+    {
+      dsc *= dsr;
+      if (dsc > 10.0) break;
+    }
     prevScore = score;
   }
+
   if (fuelLeft > 0 && oxygenLeft > 0 && foodLeft > 0)
     return 0;
   else
