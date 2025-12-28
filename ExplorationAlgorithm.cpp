@@ -1889,7 +1889,7 @@ int main(int argc, char *argv[])
     {"map", required_argument, 0, 'm'},           //Input map file name (with extension)
     {"pathFactor", required_argument, 0, 'f'},    //pathFactor * nodeCount = paths to generate each batch (default 5)
     {"inputPath", required_argument, 0, 'p'},     //Tests inputted path and speeds (inputPath=1,3) or tests and optimizes speeds on inputted path (inputPath=2,3)
-    {"plotGraph", required_argument, 0, 'g'},     //Outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in same folder and python3 is installed)
+    {"plotGraph", required_argument, 0, 'g'},     //Outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
     {"randomMap", required_argument, 0, 'r'},     //Generates random map in RandomMap.csv with specified paremeters
     {"distanceScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distanceScale
     {0, 0, 0, 0}
@@ -1964,10 +1964,17 @@ int main(int argc, char *argv[])
   {
     if (yens(bestPaths, batchSize) == -1)
     {
-      calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-      printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-      validPath = false;
-      cout << endl << "INVALID PATH: Please try a different map." << endl;
+      if (!fbPath.empty())
+      {
+        calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        cout << endl << "INVALID PATH: Please try a different map." << endl;
+      }
+      else
+      {
+        validPath = false;
+        cout << "Could not find a valid path. Please try a different map." << endl;
+      }
       break;
     }
     else
@@ -1997,10 +2004,17 @@ int main(int argc, char *argv[])
         fbPath = bestPaths.back();
       else if (i == maxIterations - 1)
       {
-        calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-        printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-        validPath = false;
-        cout << endl << "INVALID PATH: Please try a different map." << endl;
+        if (!fbPath.empty())
+        {
+          calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+          printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+          cout << endl << "INVALID PATH: Please try a different map." << endl;
+        }
+        else
+        {
+          validPath = false;
+          cout << "Could not find a valid path. Please try a different map." << endl;
+        }
       }
     }
   }
@@ -2111,7 +2125,7 @@ int main(int argc, char *argv[])
     if (system("python3 ./GraphPlotter.py") == 0)
       cout << "Successfully ran GraphPlotter.py";
     else
-      cout << "Error running GraphPlotter.py. Ensure file GraphPlotter.py is in same folder as program and python3 is installed on machine.";
+      cout << "Error running GraphPlotter.py.";
   }
   else
   {
