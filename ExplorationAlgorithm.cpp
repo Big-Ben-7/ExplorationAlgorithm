@@ -1747,11 +1747,12 @@ int testPath(string &xPath, string &yPath)
 {
   string input;
   cout << endl
-       << "Path (including " << planets[0].name << ", return to exit): ";
+       << "Path (excluding " << planets[0].name << ", return to exit): ";
   getline(cin, input);
   if (input.empty())
     return -1;
   cout << endl;
+  input = planets[0].name + "," + input;
   int commaCount = count(input.begin(), input.end(), ',');
   vector<int> path;
   for (int i = 0; i < commaCount; i++)
