@@ -1,7 +1,8 @@
+#pragma region README
 /*
  * TSA Coding 2025-2026: Exploration Algorithm
  * Team 2098-901
- * Language: C++20 (chosen for efficiency)
+ * Language: C++20 (chosen for performance)
  *
  * The following algorithms were implemented in our program:
  * 1. Bidirectional A* (for pathfinding)
@@ -13,7 +14,9 @@
  *
  * Note: since this program is kind of long, our team organized it into regions and added descriptive comments to improve readability
  */
+#pragma endregion
 
+#pragma region STD HEADERS
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -31,6 +34,9 @@
 #include <random>
 #include <cstdlib>
 using namespace std;
+#pragma endregion
+
+#pragma region GLOBAL VARIABLES
 
 #define Kf 0.15
 #define Kl 0.3
@@ -130,26 +136,27 @@ struct SlopeOptimizeData
   }
 };
 
-//Command line options
-double pathFactor = 5;
-double distanceScale = 1.0;
+//Command line options (used for testing/debugging)
+int batchSize = 0;
+double distScale = 1.0;
 int inputPath = 0;
-int plotGraph = 0;
+int plotMap = 0;
 int randomMap = 0;
-string fileName = "";
 
-//Adjacency list and 3 adjacency matrix structures used to efficiently represent graph
-vector<vector<int>> neighbors; //Contains list of adjacent nodes for each node
-vector<vector<double>> nodeCosts;
-vector<vector<double>> nodeDistances;
-vector<vector<double>> initialCosts; //Stores initial cost between two node indices to restore changes to nodeCosts in Yen's algorithm
+//Contains list of adjacent nodes for each node, speeds up neighbor expansion in pathfinding
+vector<vector<int>> neighbors;
+//3 adjacency matrix structures used to efficiently represent graph
+vector<vector<double>> nodeCosts, nodeDistances, initialCosts;
+//initialCosts used to restore changes to nodeCosts in Yen's algorithm
 
-vector<double> hF, hB; //List of each node's heuristics for forward and backward search in pathfinding
+//List of each node's heuristics for forward and backward search in pathfinding
+//Min cost per distance * euclidian distance to search target (sink for F and source for B) for a admissible and consistent heuristic
+vector<double> hF, hB;
 vector<PlanetData> planets;
 vector<HostilePlanet> hostilePlanets;
 int nodeCount, foodCount, oxygenCount, lastNodeIndex, longestNameLength;
 chrono::steady_clock::time_point startTime;
-string mapName;
+string fileName = "", mapName;
 
 //Golden section ratio for Brent's minimization
 const double phi = (3 - sqrt(5)) / 2;
@@ -160,6 +167,8 @@ const double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
 const double singleResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
 //With both resupply type remaining, ideal speed can disregard consumption of both Kl terms because both oxygen and food will be resupplied later
 const double doubleResupplySpeed = 1 / cbrt(2 * Kf);
+
+#pragma endregion
 
 #pragma region INPUT
 
@@ -445,14 +454,14 @@ int parseCSV()
 
   nodeCount = planets.size();
   lastNodeIndex = nodeCount - 1;
-  if (fabs(distanceScale - 1) > EPS)
+  if (fabs(distScale - 1) > EPS)
   {
     for (PlanetData &planet : planets)
     {
       Position &pos = planet.position;
-      pos.x *= distanceScale;
-      pos.y *= distanceScale;
-      planet.hostileRadius *= distanceScale;
+      pos.x *= distScale;
+      pos.y *= distScale;
+      planet.hostileRadius *= distScale;
     }
   }
   hostilePlanets.reserve(hostileCount);
@@ -511,14 +520,15 @@ double calculateCost(const int node1, const int node2)
   return t + fuelConsumed + oxygenConsumed + foodConsumed;
 }
 
+//Math! :)
 bool edgeInHostileRadius(const int startNode, const int endNode)
 {
   //Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
   Position &start = planets[startNode].position, end = planets[endNode].position;
   //Line eq. (parametric): x = x1 + cos(theta)*d, y = y1 + sin(theta)*d where d = distance along line and theta = atan(slope)
   double x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y, rise = y2 - y1, run = x2 - x1;
-  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); //Precompute trig for efficiency
-  double l = run * run + rise * rise;                                            //Length of line
+  double theta = atan2(rise, run), cosTheta = cos(theta), sinTheta = sin(theta); //Precompute trig for performance
+  double l = run * run + rise * rise; //Length of line
   for (HostilePlanet &planet : hostilePlanets)
   {
     Position &center = planet.position;
@@ -547,7 +557,7 @@ void initializeLists()
   nodeCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   nodeDistances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   initialCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
-  //Heuristic constant for A* pathfinding (minimum cost per unit distance traveled), ensures heuristic is admissible and consistent
+  //Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
   const double heuristic = (1 + Kl) / singleResupplySpeed + Kf * singleResupplySpeed * singleResupplySpeed;
   hF = vector<double>(nodeCount, 0), hB = vector<double>(nodeCount, 0);
 
@@ -577,9 +587,9 @@ void initializeLists()
 
       //A* heuristic for each node
       if (j == lastNodeIndex)
-        hF[i] = heuristic * distance; //Use Euclidian distance to target as heuristic for forward search
+        hF[i] = heuristic * distance;
       if (i == 0)
-        hB[j] = heuristic * distance; //Use Euclidian distance to source as heuristic for backward search
+        hB[j] = heuristic * distance;
     }
     nodeCosts[i][i] = initialCosts[i][i] = INF;
   }
@@ -589,7 +599,7 @@ void initializeLists()
 /*
 int aStar(vector<int> &bestPath, const int source, const int sink)
 {
-  //Priority queue of <cost, index> to pick most promising (least cost) node
+  //Priority queue of (cost, index) sorting promising (least cost) node at top
   priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
   pq.emplace(0, source);
   vector<double> g(nodeCount, INF);
@@ -608,7 +618,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
 
     double minCost = g[node1];
     vector<int> &nodeNeighbors = neighbors[node1];
-    for (int node2 : nodeNeighbors) //Iterate through adjacent nodes
+    for (int node2 : nodeNeighbors) //Expand neighbors
     {
       double cost = nodeCosts[node1][node2];
       if (visited[node2] || cost == INF)
@@ -644,7 +654,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
 //Works by running a forward and backward A* search (using edge relaxation and heuristic guide) until they meet, forming a complete path
 int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
 {
-  //Forward and backward search priority queues of <cost, index> to pick most promising (least cost) node
+  //Forward and backward search priority queues of (cost, index) sorting most promising (least cost) node at top
   priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pqF, pqB;
   pqF.emplace(0, source);
   pqB.emplace(0, sink);
@@ -659,11 +669,9 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   {
     int node1F = pqF.top().second, node1B = pqB.top().second;
     //Stop when sum of forward and backward costs exceeds best path cost (best meeting point has been found)
-    if (bestCost < INF)
-    {
-      if (gF[node1F] + gB[node1B] >= bestCost)
+    if (bestCost < INF && gF[node1F] + gB[node1B] >= bestCost)
         break;
-    }
+    
     //Forward search
     pqF.pop();
     if (!visitedF[node1F])
@@ -671,7 +679,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
       visitedF[node1F] = true;
       double g1 = gF[node1F];
       vector<int> &nodeNeighbors = neighbors[node1F];
-      for (int node2 : nodeNeighbors) //Iterate through adjacent nodes
+      for (int node2 : nodeNeighbors) //Expand adjacent nodes
       {
         double cost = nodeCosts[node1F][node2];
         if (cost == INF || visitedF[node2])
@@ -683,6 +691,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
           gF[node2] = newG;
           parentsF[node2] = node1F;
           pqF.emplace(newG + hF[node2], node2);
+          //Update best path if both searches have visited this node (potential meeting point)
           if (gB[node2] < INF)
           {
             double newCost = gF[node2] + gB[node2];
@@ -695,6 +704,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
         }
       }
     }
+    
     //Backward search
     pqB.pop();
     if (!visitedB[node1B])
@@ -702,7 +712,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
       visitedB[node1B] = true;
       double g1 = gB[node1B];
       vector<int> &nodeNeighbors = neighbors[node1B];
-      for (int node2 : nodeNeighbors) //Iterate through adjacent nodes
+      for (int node2 : nodeNeighbors) //Expand adjacent nodes
       {
         double cost = nodeCosts[node2][node1B];
         if (cost == INF || visitedB[node2])
@@ -714,6 +724,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
           gB[node2] = newG;
           parentsB[node2] = node1B;
           pqB.emplace(newG + hB[node2], node2);
+          //Update best path if both searches have visited this node (potential meeting point)
           if (gF[node2] < INF)
           {
             double newCost = gF[node2] + gB[node2];
@@ -851,7 +862,7 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 
 #pragma endregion
 
-#pragma region SPEED/RESOURCE OPTIMIZATION
+#pragma region SPEED/RESOURCE OPTIMIZATION //Sooo much math :O
 
 //Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
 double bisection(double a, double b, void *args, double (*func)(double, void *), const double tolerance = 1e-6)
@@ -1622,7 +1633,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
 
 #pragma endregion
 
-#pragma region TESTING/DEVELOPMENT FEATURES
+#pragma region TESTING/DEV FEATURES
 
 //Writes random map to RandomMap.csv with specified parameters (testing pathfinding/resources)
 int generateRandomMap()
@@ -1902,39 +1913,39 @@ void printPath(const string id, const vector<int> &path, const double score)
 int main(int argc, char *argv[])
 {
   //Command line options for terminal input
-  //e.g., ./ExplorationAlgorithm --map=ExampleMap.csv or ./ExplorationAlgorithm -m ExampleMap.csv
+  //e.g., ./ExplorationAlgorithm --map=ExampleMap.csv --randomMap=1
   int opt, index;
   static struct option long_options[] =
   {
-    {"map", required_argument, 0, 'm'},           //Input map file name (with extension)
-    {"pathFactor", required_argument, 0, 'f'},    //pathFactor * nodeCount = paths to generate each batch (default 5)
-    {"inputPath", required_argument, 0, 'p'},     //Tests inputted path and speeds (inputPath=1,3) or tests and optimizes speeds on inputted path (inputPath=2,3)
-    {"plotGraph", required_argument, 0, 'g'},     //Outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
-    {"randomMap", required_argument, 0, 'r'},     //Generates random map in RandomMap.csv with specified paremeters
-    {"distanceScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distanceScale
+    {"map", required_argument, 0, 'm'},       //Input map file name (with extension)
+    {"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 5 * nodeCount (larger batch improves accuracy but costs performance)
+    {"testPath", required_argument, 0, 't'},  //Tests inputted path and speeds (1) or tests and optimizes speeds on inputted path (2) or both (3)
+    {"plotMap", required_argument, 0, 'p'},   //If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
+    {"randomMap", required_argument, 0, 'r'}, //If 1, generates random map in RandomMap.csv with specified paremeters
+    {"distScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distScale (used to simulate extreme conditions)
     {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:f:p:g:r:d:", long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:b:t:g:r:d:", long_options, &index)) != -1)
   {
     switch (opt)
     {
     case 'm':
       fileName = optarg;
       break;
-    case 'f':
-      pathFactor = atof(optarg);
+    case 'b':
+      batchSize = atoi(optarg);
       break;
-    case 'p':
+    case 't':
       inputPath = atoi(optarg);
       break;
-    case 'g':
-      plotGraph = atoi(optarg);
+    case 'p':
+      plotMap = atoi(optarg);
       break;
     case 'r':
       randomMap = atoi(optarg);
       break;
     case 'd':
-      distanceScale = atof(optarg);
+      distScale = atof(optarg);
       break;
     default:
       break;
@@ -1969,14 +1980,18 @@ int main(int argc, char *argv[])
 
   //Pathfinding and speed/resource optimization
   initializeLists();
-  int batchSize = (int)pathFactor * nodeCount;
-  if (batchSize < 50)
-    batchSize = 50;
-  else if (batchSize > 500)
-    batchSize = 500;
+  if (batchSize <= 0)
+  {
+    batchSize = (int) 5 * nodeCount;
+    if (batchSize < 50)
+      batchSize = 50;
+    else if (batchSize > 500)
+      batchSize = 500;
+  }
   vector<vector<int>> bestPaths;
   vector<int> bestPath, fbPath; //Fallback path if no valid best path is found
-  vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood;
+  vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood; //Raw = pre-resupply
+  int bestIndex;
   bool validPath = true;
   //Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
   //If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
@@ -1986,17 +2001,22 @@ int main(int argc, char *argv[])
     double bestScore = INF;
     if (yens(bestPaths, batchSize) == -1)
     {
+      if (fbPath.empty())
+      {
+        cout << endl << "A valid path could not be found. Please try a different map." << endl;
+        break;
+      }
       calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestScore);
       printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
       validPath = false;
-      cout << endl << "A valid path could not be found. Please try a different map." << endl;
+      cout << endl << "INVALID PATH: Please try a different map." << endl;
       break;
     }
     else
     {
       double score;
-      int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int)bestPaths.size());
-      for (int j = startBatch; j < endBatch; j++) //Only optimize out of paths in current batch for efficiency
+      int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int) bestPaths.size());
+      for (int j = startBatch; j < endBatch; j++) //Only optimize out of paths in current batch for performance
       {
         vector<int> &path = bestPaths[j];
         int pathLength = path.size();
@@ -2007,21 +2027,27 @@ int main(int argc, char *argv[])
         score = INF;
         error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
         if (error == 0 && score < bestScore)
-          bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood;
+          bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood, bestIndex = j;
       }
       if (bestScore < INF)
       {
         printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        cout << "Paths searched: " << bestIndex+1 << endl;
         break;
       }
       else if (i == 0)
         fbPath = bestPaths.back();
       else if (i == maxIterations - 1)
       {
+        if (fbPath.empty())
+        {
+          cout << endl << "A valid path could not be found. Please try a different map." << endl;
+          break;
+        }
         calculateResources(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestScore);
         printData(fbPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
         validPath = false;
-        cout << endl << "A valid path could not be found. Please try a different map." << endl;
+        cout << endl << "INVALID PATH: Please try a different map." << endl;
       }
     }
   }
@@ -2031,7 +2057,7 @@ int main(int argc, char *argv[])
        << "Calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
 
   //Output map and path data to PlotterData.csv for testing
-  if (plotGraph > 0)
+  if (plotMap > 0)
   {
     string xEndpt = "", yEndpt = "", xNone = "", yNone = "", xFood = "", yFood = "", xOxygen = "", yOxygen = "", xHostile = "", yHostile = "", rHostile = "", xPath = "", yPath = "";
     for (int i = 0; i < nodeCount; i++)
@@ -2126,7 +2152,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-      cout << "Error outputting graph/path data to file PlotterData.csv" << endl;
+      cout << "Error outputting map data to file PlotterData.csv" << endl;
       cout << endl;
     }
 

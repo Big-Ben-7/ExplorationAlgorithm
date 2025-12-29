@@ -10,8 +10,8 @@ with open("PlotterData.csv", mode='r', newline = '') as file:
         data.append(rowData)
 fig, ax = plt.subplots()
 index = 0
-plt.scatter(data[index][0], data[index+1][0], color='black', label='source')
-plt.scatter(data[index][1], data[index+1][1], color='purple', label='sink')
+plt.scatter(data[index][0], data[index+1][0], color='pink', label='Earth')
+plt.scatter(data[index][1], data[index+1][1], color='orange', label='target')
 index += 2
 try:
     plt.scatter(data[index], data[index+1], color='purple', label='normal')
