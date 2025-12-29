@@ -161,14 +161,13 @@ int nodeCount, foodCount, oxygenCount, lastNodeIndex, longestNameLength;
 chrono::steady_clock::time_point startTime;
 string fileName = "", mapName;
 
-//Golden section ratio for Brent's minimization
-const double phi = (3 - sqrt(5)) / 2;
+const double phi = (3 - sqrt(5)) / 2; //Golden section ratio for Brent's minimization
 //Speed optimization by first derivative test: cost = c(x) = time + fuel + food + oxygen = d/v + Kf*d*v^2 + Kl*d/v + Kl*d/v
 //Cost minimized at c'(x) = 0 => (-d + 2*Kf*d*v^3 - Kl*d - Kl*d)/v^2 = 0 => v = cbrt((1 + Kl+Kl) / (2*Kf))
 const double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
-//With one resupply type remaining, ideal speed can disregard consumption of one resource type (one Kl term) because it will be resupplied later
+//One resupply type remaining, ideal speed can disregard consumption of 1 resource type (1 Kl term)
 const double singleResupplySpeed = cbrt((1 + Kl) / (2 * Kf));
-//With both resupply type remaining, ideal speed can disregard consumption of both Kl terms because both oxygen and food will be resupplied later
+//Both resupply types remaining, ideal speed can disregard consumption of both Kl terms
 const double doubleResupplySpeed = 1 / cbrt(2 * Kf);
 
 #pragma endregion
@@ -199,32 +198,6 @@ string trim(const string &str)
   }
   str2 = str2.substr(i, j - i + 1);
   return str2;
-}
-
-bool isValidPlanet(const string &planetName)
-{
-  bool alphanumeric = false;
-  for (const char &c : planetName)
-  {
-    if (isalnum(c))
-    {
-      alphanumeric = true;
-      continue;
-    }
-    switch (c)
-    {
-    //Spaces, dashes, and parentheses allowed
-    case ' ':
-    case '-':
-    case '(':
-    case ')':
-      continue;
-    default:
-      return false;
-    }
-  }
-  //Planet names can't be all special characters
-  return alphanumeric;
 }
 
 double calculateDistance(const Position &pos1, const Position &pos2)
@@ -295,7 +268,34 @@ int parseCSV()
 
     commaIndex = line.find(',');
     planetName = trim(line.substr(0, commaIndex));
-    if (planetName.empty() || !isValidPlanet(planetName))
+
+    bool validName, alphanumeric = false;
+    for (const char &c : planetName)
+    {
+      if (isalnum(c))
+      {
+        alphanumeric = true;
+        continue;
+      }
+      switch (c)
+      {
+      //Spaces, dashes, and parentheses allowed
+      case ' ':
+      case '-':
+      case '(':
+      case ')':
+        continue;
+      default:
+        validName = false;
+        break;
+      }
+      if (!validName)
+        break;
+    }
+    //Planet names can't be all special characters
+    validName = alphanumeric;
+
+    if (planetName.empty() || !validName)
     {
       cout << "CSV Error: Invalid planet name \"" << planetName << "\" found on entry " << lineNumber << ". Planet names must be alphanumeric (spaces, dashes, and parentheses accepted)." << endl;
       return -1;
