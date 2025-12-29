@@ -588,7 +588,8 @@ void initializeLists()
   }
 }
 
-//Modified A* algorithm to find single best path from source to sink node
+//Removed in favor of bidirectional A*
+/*
 int aStar(vector<int> &bestPath, const int source, const int sink)
 {
   //Priority queue of <cost, index> to pick most promising (least cost) node
@@ -640,6 +641,7 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
   reverse(bestPath.begin(), bestPath.end());
   return 0;
 }
+*/
 
 //Modified A* algorithm with bidirectional search to find single best-path from source to sink node
 //Works by running a forward and backward A* search (using edge relaxation and heuristic guide) until they meet, forming a complete path
@@ -761,7 +763,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
 }
 
 //Implements modified Yen's algorithm to find pathCount best paths
-//Works by repeatedly calling bidirectionAStar after modifying graph (blocking root path of previous best paths)
+//Works by repeatedly calling bidirectional A* after modifying graph (blocking root path of previous best paths)
 int yens(vector<vector<int>> &bestPaths, int pathCount)
 {
   vector<int> bestPath, sameRootPaths, rootPath, spurPath, totalPath;
