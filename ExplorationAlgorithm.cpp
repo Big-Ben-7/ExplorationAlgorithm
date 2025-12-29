@@ -136,9 +136,6 @@ double distanceScale = 1.0;
 int inputPath = 0;
 int plotGraph = 0;
 int randomMap = 0;
-int printIter = 0;
-int printPaths = 0;
-int pickPath = -1;
 string fileName = "";
 
 //Adjacency list and 3 adjacency matrix structures used to efficiently represent graph
@@ -1516,12 +1513,6 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
       score += t;
     }
     score -= fuel.back() + oxygen.back() + food.back();
-    if (printIter > 0)
-    {
-      if (iter == 0)
-        cout << endl;
-      cout << "im3:" << iter << "," << score << "," << prevScore << "," << lastOxygen << "," << lastFood << "," << dsc << endl;
-    }
     if (score > prevScore)
     {
       dsc /= dsr;
@@ -1921,9 +1912,6 @@ int main(int argc, char *argv[])
     {"plotGraph", required_argument, 0, 'g'},     //Outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
     {"randomMap", required_argument, 0, 'r'},     //Generates random map in RandomMap.csv with specified paremeters
     {"distanceScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distanceScale
-    {"printPaths", required_argument, 0, 'v'},    //print all paths
-    {"pickPath", required_argument, 0, 'x'},      //pick a single path
-    {"printIter", required_argument, 0, 'u'},     //print iterM3 results
     {0, 0, 0, 0}
   };
   while ((opt = getopt_long(argc, argv, "m:f:p:g:r:d:", long_options, &index)) != -1)
@@ -1947,15 +1935,6 @@ int main(int argc, char *argv[])
       break;
     case 'd':
       distanceScale = atof(optarg);
-      break;
-    case 'v':
-      printPaths = atoi(optarg);
-      break;
-    case 'x':
-      pickPath = atoi(optarg);
-      break;
-    case 'u':
-      printIter = atoi(optarg);
       break;
     default:
       break;
@@ -2023,29 +2002,12 @@ int main(int argc, char *argv[])
         int pathLength = path.size();
         if (pathLength < 2)
           continue;
-        if (pickPath >= 0)
-        {
-          if (j < pickPath)
-            continue;
-          if (j > pickPath)
-            break;
-        }
         vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength), rawOxygen(pathLength), rawFood(pathLength);
         fuel[0] = MaxFuel, oxygen[0] = MaxOxygen, food[0] = MaxFood;
         score = INF;
         error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
         if (error == 0 && score < bestScore)
           bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood;
-
-        if (printPaths == 1)
-        {
-          if (error == 0)
-            printPath("pth " + to_string(j), path, score);
-        }
-        else if (printPaths == 2)
-        {
-          printPath((error ? "err " : "pth ") + to_string(j), path, score);
-        }
       }
       if (bestScore < INF)
       {
@@ -2061,8 +2023,6 @@ int main(int argc, char *argv[])
         validPath = false;
         cout << endl << "A valid path could not be found. Please try a different map." << endl;
       }
-      if (pickPath >= 0 && endBatch > pickPath)
-        break;
     }
   }
   long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
