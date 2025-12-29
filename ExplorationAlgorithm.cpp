@@ -1,18 +1,19 @@
 #pragma region README
 /*
  * TSA Coding 2025-2026: Exploration Algorithm
- * Team 2098-901
- * Language: C++20 (chosen for performance)
+ * TEAM: 2098-901
+ * LANGUAGE: C++20 (chosen for performance), Python was also used but only for testing
  *
- * The following algorithms were implemented in our program:
+ * RESOURCES
+ * The following classical algorithms were implemented in our program:
  * 1. Bidirectional A* (for pathfinding)
  * 2. Yen's algorithm (for pathfinding)
  * 3. Bisection method (for root-finding)
  * 4. Brent's method (for minimization)
- * As per the TSA event guide rules, only the C++ standard library (std) was used
+ * As per the TSA event guide rules, only the language's standard library (std) was used (no 3rd-party libraries)
  * (Obviously no AI was used in the making of this project)
  *
- * Note: since this program is kind of long, our team organized it into regions and added descriptive comments to improve readability
+ * NOTE: Since this program is kind of long, our team organized it into regions and added descriptive comments to improve readability
  */
 #pragma endregion
 
@@ -525,7 +526,6 @@ double calculateCost(const int node1, const int node2)
   return t + fuelConsumed + oxygenConsumed + foodConsumed;
 }
 
-//Math! :)
 bool edgeInHostileRadius(const int startNode, const int endNode)
 {
   //Calculates intersection of line through (x1,y1) and (y1,y2) with circle of radius r at (x3,y3)
@@ -868,7 +868,6 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
 #pragma endregion
 
 #pragma region SPEED/RESOURCE OPTIMIZATION
-//Sooo much math :O
 
 //Bisection algorithm to find root c of func in [a, b], works by repeatedly halving interval until func(c) is approximately 0
 double bisection(double a, double b, void *args, double (*func)(double, void *), const double tolerance = 1e-6)
