@@ -67,7 +67,6 @@ enum Resupply
   FOOD,
   BOTH
 };
-//Represents a planet on the map
 struct PlanetData
 {
   string name;
@@ -89,7 +88,6 @@ struct HostilePlanet
     radius = r;
   }
 };
-//Represents path of nodes (planets)
 struct Path
 {
   vector<int> path;
@@ -155,8 +153,7 @@ vector<vector<int>> neighbors;
 vector<vector<double>> nodeCosts, nodeDistances, initialCosts;
 //initialCosts used to restore changes to nodeCosts in Yen's algorithm
 
-//List of each node's heuristics for forward and backward search in pathfinding
-//Min cost per distance * euclidian distance to search target (sink for F and source for B) for a admissible and consistent heuristic
+//Min cost per distance * euclidian distance to search target (sink for F and source for B) for admissible + consistent heuristic
 vector<double> hF, hB;
 vector<PlanetData> planets;
 vector<HostilePlanet> hostilePlanets;
@@ -501,8 +498,9 @@ int parseCSV()
 double calculateCost(const int node1, const int node2)
 {
   double d = nodeDistances[node1][node2];
+  //Determine speed based on probability that there is food/oxygen resupply left in path
   double foodProb = foodCount / (double)nodeCount;
-  double oxygenProb = oxygenProb / (double)nodeCount;
+  double oxygenProb = oxygenCount / (double)nodeCount;
   double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
   switch (planets[node2].resupply)
   {
@@ -517,7 +515,7 @@ double calculateCost(const int node1, const int node2)
     oxygenConsumed = (1 - oxygenProb) * Kl * t;
     break;
   default:
-    speed = doubleResupplySpeed * cbrt(1 + (1 + oxygenProb + foodProb) * Kl), t = d / speed;
+    speed = doubleResupplySpeed * cbrt(1 + (2 + oxygenProb + foodProb) * Kl), t = d / speed;
     oxygenConsumed = (1 - oxygenProb) * Kl * t;
     foodConsumed = (1 - foodProb) * Kl * t;
     break;
@@ -655,25 +653,23 @@ int aStar(vector<int> &bestPath, const int source, const int sink)
 }
 */
 
-//Modified A* algorithm with bidirectional search to find single best-path from source to sink node
-//Works by running a forward and backward A* search (using edge relaxation and heuristic guide) until they meet, forming a complete path
-int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
+//Runs forward + backward A* search until they meet to form best path from Earth to target
+int bidirectionAStar(vector<int> &bestPath, const int earth, const int target)
 {
   //Forward and backward search priority queues of (cost, index) sorting most promising (least cost) node at top
   priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pqF, pqB;
-  pqF.emplace(0, source);
-  pqB.emplace(0, sink);
-  vector<double> gF(nodeCount, INF), gB(nodeCount, INF);               //Forward and backward g-scores (costs), initialized to infinity
-  gF[source] = gB[sink] = 0;                                           //Initialize cost to source in forward and sink in backward search to 0
-  vector<bool> visitedF(nodeCount, false), visitedB(nodeCount, false); //Visited nodes in forward and backward search
-  vector<int> parentsF(nodeCount, -1), parentsB(nodeCount, -1);        //Each node's previous node in path (for path reconstruction)
+  pqF.emplace(0, earth);
+  pqB.emplace(0, target);
+  vector<double> gF(nodeCount, INF), gB(nodeCount, INF); //Forward and backward g-scores/cumulative costs
+  gF[earth] = gB[target] = 0;                                           
+  vector<bool> visitedF(nodeCount, false), visitedB(nodeCount, false); 
+  vector<int> parentsF(nodeCount, -1), parentsB(nodeCount, -1);        
 
   double bestCost = INF;
   int meetingNode = -1;
   while (!pqF.empty() && !pqB.empty())
   {
     int node1F = pqF.top().second, node1B = pqB.top().second;
-    //Stop when sum of forward and backward costs exceeds best path cost (best meeting point has been found)
     if (bestCost < INF && gF[node1F] + gB[node1B] >= bestCost)
         break;
     
@@ -684,7 +680,7 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
       visitedF[node1F] = true;
       double g1 = gF[node1F];
       vector<int> &nodeNeighbors = neighbors[node1F];
-      for (int node2 : nodeNeighbors) //Expand adjacent nodes
+      for (int node2 : nodeNeighbors)
       {
         double cost = nodeCosts[node1F][node2];
         if (cost == INF || visitedF[node2])
@@ -753,30 +749,29 @@ int bidirectionAStar(vector<int> &bestPath, const int source, const int sink)
   {
     //Build left path before meeting node
     leftPath.push_back(node);
-    if (node == source)
+    if (node == earth)
       break;
     node = parentsF[node];
   }
-  if (leftPath.back() != source)
-    return -1; //Path didn't connect to source
+  if (leftPath.back() != earth)
+    return -1; //Path didn't connect to earth
   reverse(leftPath.begin(), leftPath.end());
   node = meetingNode;
-  while (node != -1 && node != sink)
+  while (node != -1 && node != target)
   {
     //Build right path after meeting node
     node = parentsB[node];
     if (node != -1)
       rightPath.push_back(node);
   }
-  if (meetingNode != sink && (rightPath.empty() || rightPath.back() != sink))
-    return -1; //Path didn't connect to sink
+  if (meetingNode != target && (rightPath.empty() || rightPath.back() != target))
+    return -1; //Path didn't connect to target
   bestPath = leftPath;
   bestPath.insert(bestPath.end(), rightPath.begin(), rightPath.end());
   return bestPath.empty() ? -1 : 0;
 }
 
-//Implements modified Yen's algorithm to find pathCount best paths
-//Works by repeatedly calling bidirectional A* after modifying graph (blocking root path of previous best paths)
+//Finds pathCount best paths, repeatedly calls bidirectional A* after modifying graph (blocking root path of previous best paths)
 int yens(vector<vector<int>> &bestPaths, int pathCount)
 {
   vector<int> bestPath, sameRootPaths, rootPath, spurPath, totalPath;
@@ -799,8 +794,8 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
     for (int i = 0; i < n; i++)
     {
       int bestPathsCount = bestPaths.size();
-      rootPath.assign(lastBestPath.begin(), lastBestPath.begin() + i + 1); //Sequence of nodes from source to spur node
-      sameRootPaths.clear();                                               //Store paths with removed edges to speed up restoring
+      rootPath.assign(lastBestPath.begin(), lastBestPath.begin() + i + 1); //rootPath = sequence of nodes from source to spur node
+      sameRootPaths.clear();
       sameRootPaths.reserve(bestPathsCount);
       //Modify graph to produce different best path
       for (int j = 0; j < bestPathsCount; j++)
@@ -850,13 +845,13 @@ int yens(vector<vector<int>> &bestPaths, int pathCount)
       double cost = 0;
       for (int j = 1; j < pathLength; j++)
         cost += initialCosts[totalPath[j - 1]][totalPath[j]];
-      potentialPaths.emplace(totalPath, cost); //Adds complete path sorted by ascending cost, avoiding duplicates
+      potentialPaths.emplace(totalPath, cost); //Adds complete path sorted by ascending cost, avoiding duplicates (set)
     }
 
     if (potentialPaths.empty()) //No spur paths (e.g. all already exhausted or none exist)
       break;
     auto it = potentialPaths.begin();
-    const Path &path = *it; //First element of set returns best path
+    const Path &path = *it;
     bestPaths.push_back(path.path);
     potentialPaths.erase(it);
   }
@@ -971,18 +966,18 @@ double slopeOptimizeFunc(double x, void *arg)
   return r;
 }
 
-//Uses Brent's minimization method (parabolic interpolation with golden section search fallback) to find best speeds (see optimizeSpeed())
+//Uses Brent's minimization method to find best speeds (see optimizeSpeed())
 int minimize(double &xm, double &fm, double a, double b,
              void *arg, double (*func)(double, void *), const double tolerance = 1e-8, const int maxIter = 500)
 {
-  //Initialize bracketing points
+  //Initializes bracketing points
   int returnVal;
   double x = a + phi * (b - a);
   double fx = func(x, arg);
-  double w = x, fw = fx; //w is previous best point
-  double v = x, fv = fx; //v is previous of previous best point
-  double d = 0.0;        //Current step
-  double e = 0.0;        //Distance moved from previous step
+  double w = x, fw = fx; //w = previous best point
+  double v = x, fv = fx; //v = previous of previous best point
+  double d = 0.0;
+  double e = 0.0;
 
   for (int iter = 0; iter < maxIter; iter++)
   {
@@ -990,7 +985,7 @@ int minimize(double &xm, double &fm, double a, double b,
     double tol1 = tolerance * fabs(x);
     double tol2 = 2.0 * tol1;
 
-    //Stop when interval sufficiently small
+    //Stops when interval sufficiently small
     if (fabs(x - midpoint) <= (tol2 - 0.5 * (b - a)))
     {
       xm = x;
@@ -1001,17 +996,15 @@ int minimize(double &xm, double &fm, double a, double b,
     //Try parabolic interpolation
     if (fabs(e) > tol1)
     {
-      //Fit parabola through (w, fw), (x, fx), (v, fv)
+      //Fits parabola through (w, fw), (x, fx), (v, fv)
       double r = (x - w) * (fx - fv);
       double q = (x - v) * (fx - fw);
       double p = (x - v) * q - (x - w) * r;
       q = 2.0 * (q - r);
       q > 0.0 ? p = -p : q = -q;
 
-      //Check if parabolic step is acceptable
       if (fabs(p) < fabs(0.5 * q * e) && p > q * (a - x) && p < q * (b - x))
       {
-        //Take parabolic step
         d = p / q;
         double u = x + d;
 
@@ -1021,22 +1014,21 @@ int minimize(double &xm, double &fm, double a, double b,
       }
       else
       {
-        //Fall back to Golden section search
         e = (x >= midpoint) ? (a - x) : (b - x);
         d = phi * e;
       }
     }
     else
     {
-      //Fall back to Golden section search
+      //Fall back to Golden section search if parabolic step unacceptable
       e = (x >= midpoint) ? (a - x) : (b - x);
       d = phi * e;
     }
 
-    //Evaluate function at new point
+    //Evaluates function at new point
     double u = (fabs(d) >= tol1) ? (x + d) : (x + ((d > 0.0) ? tol1 : -tol1));
     double fu = func(u, arg);
-    //Update bracketing triplet
+    //Updates bracketing triplet
     if (fu <= fx)
     {
       u >= x ? a = x : b = x;
@@ -1291,7 +1283,7 @@ int calculateResources(const vector<int> &path, vector<double> &speeds, vector<d
 
     double t = d / speed;
     double fuelConsumed = Kf * d * speed * speed;
-    double consumed = Kl * t; //Oxygen and food consumed
+    double consumed = Kl * t; //Oxygen/food consumed
     score += t;
     fuelLeft -= fuelConsumed;
     oxygenLeft -= consumed;
@@ -1317,7 +1309,6 @@ int calculateResources(const vector<int> &path, vector<double> &speeds, vector<d
   return error;
 }
 
-//Optimizes speed/resource usage on path with 3 methods (which increase in both robustness and computation time)
 int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel,
                  vector<double> &oxygen, vector<double> &food, vector<double> &rawOxygen, vector<double> &rawFood)
 {
@@ -1582,7 +1573,6 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
       longestSpeedLength = speedString.size();
   }
 
-  //Print output
   cout << endl << endl << "PROGRAM OUTPUT" << endl;
   cout << "Map name: " << mapName << endl;
   cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl << endl;
@@ -1928,7 +1918,7 @@ void printPath(const string id, const vector<int> &path, const double score)
 int main(int argc, char *argv[])
 {
   //Command line options for terminal input
-  //e.g. ./ExplorationAlgorithm --map=ExampleMap.csv --randomMap=1
+  //e.g. ./ExplorationAlgorithm --map=ExampleMap.csv
   int opt, index;
   static struct option long_options[] =
   {
@@ -2016,7 +2006,7 @@ int main(int argc, char *argv[])
     vector<vector<int>> bestPaths;
     vector<int> bestPath, fbPath; //Fallback path if no valid best path is found
     vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood; //Raw = pre-resupply
-    int bestIndex;
+    //int bestIndex;
     bool validPath = true;
     //Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
     //If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
@@ -2052,12 +2042,12 @@ int main(int argc, char *argv[])
           score = INF;
           error = optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood);
           if (error == 0 && score < bestScore)
-            bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood, bestIndex = j;
+            bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood;//, bestIndex = j;
         }
         if (bestScore < INF)
         {
           printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-          cout << "Paths searched: " << bestIndex+1 << endl;
+          //cout << "Paths searched: " << bestIndex+1 << endl;
           break;
         }
         else if (i == 0)
