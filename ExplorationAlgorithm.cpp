@@ -1586,9 +1586,9 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   //Print output
   cout << endl << endl << "PROGRAM OUTPUT" << endl;
   cout << "Map name: " << mapName << endl;
-  cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl;
-  cout << "* Note: Some values are in scientific notation for consistent formatting (e.g. 6.67e-02 = 0.0667)" << endl << endl;
+  cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNodeIndex].name << " (included)" << endl << endl;
   cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(12) << "Distance |" << setw(12) << "Time |" << setw(12) << "Fuel |" << setw(10) << "Oxygen" << setw(8) << "Res. |" << setw(10) << "Food" << setw(8) << "Res. |" << setw(13) << "Score |" << endl;
+  int width = longestNameLength + indexWidth + longestSpeedLength + 93;
   cout << scientific << setprecision(3);
   double travelTime = 0.0;
   double travelDistance = 0.0;
@@ -1627,6 +1627,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
          << setw(10) << s << " |"
          << endl;
   }
+  cout << "* Note: Some values are in scientific notation for consistent formatting (e.g. 6.67e-02 = 0.0667)" << endl;
   cout << endl << "Final stats" << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
   cout << "Total time: " << defaultfloat << setprecision(8) << travelTime << endl;
@@ -1668,20 +1669,20 @@ int generateRandomMap(bool useLast = false)
     if (input == "")
       input = "10";
     maxRad = stod(input);
-    cout << "Hostile probability (return for default 0.2): ";
+    cout << "Hostile probability (return for default 0.1): ";
     getline(cin, input);
     if (input == "")
-      input = "0.2";
+      input = "0.1";
     hosProb = stod(input);
-    cout << "Oxygen resupply probability (return for default 0.2): ";
+    cout << "Oxygen resupply probability (return for default 0.1): ";
     getline(cin, input);
     if (input == "")
-      input = "0.2";
+      input = "0.1";
     oxygenProb = stod(input);
-    cout << "Food resupply probability (return for default 0.2): ";
+    cout << "Food resupply probability (return for default 0.1): ";
     getline(cin, input);
     if (input == "")
-      input = "0.2";
+      input = "0.1";
     foodProb = stod(input);
     lastPN = planetNumber, lastMP = maxPos, lastHR = maxRad, lastHP = hosProb, lastOP = oxygenProb, lastFP = foodProb;
   }
@@ -2204,6 +2205,7 @@ int main(int argc, char *argv[])
         cout << endl;
       }
 
+      cout << endl;
       if (system("python3 ./GraphPlotter.py") == 0)
         cout << "Successfully ran GraphPlotter.py" << endl;
       else
