@@ -255,7 +255,6 @@ int parseCSV()
   //Start computation time immediately after user enters file name.
   startTime = chrono::steady_clock::now();
 
-  //Header line error handling
   do
   {
     getline(iFile, line);
@@ -278,7 +277,6 @@ int parseCSV()
     line = line.substr(commaIndex + 1);
   }
 
-  //Extract data with error handling
   string planetName, type, resupply, substring;
   vector<int> hostileIndices;
   int lineNumber = 1;
@@ -295,7 +293,6 @@ int parseCSV()
       return -1;
     }
 
-    //Planet name
     commaIndex = line.find(',');
     planetName = trim(line.substr(0, commaIndex));
     if (planetName.empty() || !isValidPlanet(planetName))
@@ -314,7 +311,6 @@ int parseCSV()
     }
     line = line.substr(commaIndex + 1);
 
-    //X-coordinate
     commaIndex = line.find(',');
     substring = trim(line.substr(0, commaIndex));
     try
@@ -328,7 +324,6 @@ int parseCSV()
     }
     line = line.substr(commaIndex + 1);
 
-    //Y-coordinate
     commaIndex = line.find(',');
     substring = trim(line.substr(0, commaIndex));
     try
@@ -342,7 +337,6 @@ int parseCSV()
     }
     line = line.substr(commaIndex + 1);
 
-    //Type
     commaIndex = line.find(',');
     type = trim(toLower(line.substr(0, commaIndex)));
     if (type != "neutral" && type != "hostile")
@@ -352,7 +346,6 @@ int parseCSV()
     }
     line = line.substr(commaIndex + 1);
 
-    //Resupply
     commaIndex = line.find(',');
     resupply = trim(toLower(line.substr(0, commaIndex)));
     Resupply resupplyEnum;
@@ -369,7 +362,6 @@ int parseCSV()
     }
     line = trim(line.substr(commaIndex + 1));
 
-    //Hostile radius
     try
     {
       hostileRadius = stod(line);
@@ -457,7 +449,7 @@ int parseCSV()
 
   nodeCount = planets.size();
   lastNodeIndex = nodeCount - 1;
-  if (fabs(distScale - 1) > EPS)
+  if (fabs(distScale - 1) > EPS) //Scale map (used to test extreme conditions)
   {
     for (PlanetData &planet : planets)
     {
@@ -597,61 +589,6 @@ void initializeLists()
     nodeCosts[i][i] = initialCosts[i][i] = INF;
   }
 }
-
-//Removed in favor of bidirectional A*
-/*
-int aStar(vector<int> &bestPath, const int source, const int sink)
-{
-  //Priority queue of (cost, index) sorting promising (least cost) node at top
-  priority_queue<pair<double, int>, vector<pair<double, int>>, greater<pair<double, int>>> pq;
-  pq.emplace(0, source);
-  vector<double> g(nodeCount, INF);
-  g[source] = 0;                                   
-  vector<bool> visited(nodeCount, false);
-  vector<int> parents(nodeCount, -1);
-  while (!pq.empty())
-  {
-    int node1 = pq.top().second;
-    pq.pop();
-    if (visited[node1])
-      continue;
-    visited[node1] = true;
-    if (node1 == sink) //Reached target
-      break;
-
-    double minCost = g[node1];
-    vector<int> &nodeNeighbors = neighbors[node1];
-    for (int node2 : nodeNeighbors) //Expand neighbors
-    {
-      double cost = nodeCosts[node1][node2];
-      if (visited[node2] || cost == INF)
-        continue;
-      double newG = cost + minCost;
-      if (newG < g[node2])
-      {
-        //Relax edge
-        g[node2] = newG;
-        parents[node2] = node1;
-        pq.emplace(newG + hF[node2], node2); //hF is heuristic (min cost per distance * distance to sink)
-      }
-    }
-  }
-
-  //Reconstruct path found by A* algorithm
-  int node = sink;
-  while (node != -1)
-  {
-    bestPath.push_back(node);
-    if (node == source)
-      break;
-    node = parents[node];
-  }
-  if (bestPath.back() != source)
-    return -1;
-  reverse(bestPath.begin(), bestPath.end());
-  return 0;
-}
-*/
 
 //Runs forward + backward A* search until they meet to form best path from Earth to target
 int bidirectionAStar(vector<int> &bestPath, const int earth, const int target)
