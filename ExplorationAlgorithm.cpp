@@ -128,7 +128,7 @@ struct SlopeOptimizeData
   }
 };
 
-// Command line options (testing/debugging)
+// Command line options (for testing/debugging)
 int batchSize = 0;
 double distScale = 1.0;
 int inputPath = 0;
@@ -141,8 +141,7 @@ int quickTest = 0;
 // Contains list of adjacent nodes for each node, speeds up neighbor expansion in pathfinding
 vector<vector<int>> neighbors;
 // 3 adjacency matrix structures to efficiently represent graph
-vector<vector<double>> costs, distances, initialCosts;
-// initialCosts used to restore changes to costs in Yen's algorithm
+vector<vector<double>> costs, distances, initialCosts; // initialCosts used to restore changes to costs in Yen's algorithm
 
 vector<double> hF, hB; // Min cost per distance * euclidian distance to search target (sink for F and source for B) for admissible + consistent heuristic
 vector<PlanetData> planets;
@@ -1785,13 +1784,13 @@ int rawTestPath(string &xPath, string &yPath)
 
 int main(int argc, char *argv[])
 {
-  // Command line options for terminal input
+  // Command line options for terminal input (for testing)
   // e.g. ./ExplorationAlgorithm --map=ExampleMap.csv
   int opt, index;
   static struct option long_options[] =
       {
           {"map", required_argument, 0, 'm'},       // Input map file name (with extension)
-          {"batchSize", required_argument, 0, 'b'}, // Paths to generate each batch, defaults to 5 * nodeCount (larger batch improves accuracy but costs performance)
+          {"batchSize", required_argument, 0, 'b'}, // Paths to generate each batch, defaults to 5 * nodeCount (larger batch => >accuracy, <performance)
           {"testPath", required_argument, 0, 't'},  // Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
           {"plotMap", required_argument, 0, 'p'},   // If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
           {"randomMap", required_argument, 0, 'r'}, // If 1, generates random map in RandomMap.csv with specified paremeters
@@ -1898,7 +1897,7 @@ int main(int argc, char *argv[])
       }
       else
       {
-        double score, minFuelConsumed = INF;
+        double score/*, minFuelCons = INF*/;
         int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int)bestPaths.size());
         for (int j = startBatch; j < endBatch; j++) // Only optimize out of paths in current batch for performance
         {
@@ -1921,8 +1920,8 @@ int main(int argc, char *argv[])
               fbScore = score, fbPath = path, fbSpeeds = speeds, fbFuel = fuel, fbOxygen = oxygen, fbFood = food, fbRawOxygen = rawOxygen, fbRawFood = rawFood;
           }
           double fuelConsumed = MaxFuel - fuel.back();
-          if (minFuelConsumed > fuelConsumed)
-            minFuelConsumed = fuelConsumed;
+          /*if (fuelConsumed < minFuelCons)
+            minFuelCons = fuelConsumed;*/
         }
         if (bestScore < INF)
         {
@@ -1930,7 +1929,7 @@ int main(int argc, char *argv[])
           // cout << "Paths searched: " << bestIndex+1 << endl;
           break;
         }
-        if (i == maxIterations - 1 || minFuelConsumed > 2 * MaxFuel)
+        if (i == maxIterations - 1 /*|| minFuelCons > 10 * MaxFuel*/)
         {
           validPath = false;
           if (fbPath.empty())
