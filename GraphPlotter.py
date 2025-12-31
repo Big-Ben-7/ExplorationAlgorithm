@@ -33,7 +33,11 @@ if data[index] != "":
         ax.add_patch(circle)
 index += 3
 if data[index] != "":
-    plt.plot(data[index], data[index+1], linestyle='-', marker='.', color='orange')
+    if len(data[index+1]) == len(data[index]):
+        plt.plot(data[index], data[index+1], linestyle='-', marker='.', color='orange')
+    else:
+        plt.plot(data[index], data[index+1][:-1], linestyle='--', marker='.', color='orange') #Dashed = invalid path
+        
 index += 2
 for i in range(index, len(data)-1, 2):
     plt.plot(data[i], data[i+1], linestyle='-', marker='.', color='black')
@@ -41,5 +45,5 @@ ax.set_aspect('equal', 'box')
 plt.title('Data')
 plt.xlabel('x')
 plt.ylabel('y')
-plt.legend()
+plt.legend
 plt.show()

@@ -2008,7 +2008,7 @@ int main(int argc, char *argv[])
             xPath += "," + to_string(planets[fbPath[i]].position.x);
             yPath += "," + to_string(planets[fbPath[i]].position.y);
           }
-          yPath += ",0";
+          yPath += ",0"; //Invalid path indicator
         }
       }
       ofstream outFile("PlotterData.csv");
