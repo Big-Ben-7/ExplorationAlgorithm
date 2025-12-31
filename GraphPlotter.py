@@ -15,19 +15,19 @@ with open("PlotterData.csv", mode='r', newline = '') as file:
 fig, ax = plt.subplots()
 index = 0
 plt.scatter(data[index][0], data[index+1][0], color='cyan', label='Earth')
-plt.scatter(data[index][1], data[index+1][1], color='magenta', label='target')
+plt.scatter(data[index][1], data[index+1][1], color='magenta', label='Target')
 index += 2
 if data[index] != "":
-    plt.scatter(data[index], data[index+1], color='purple', label='normal')
+    plt.scatter(data[index], data[index+1], color='purple', label='Normal')
 index += 2
 if data[index] != "":
-    plt.scatter(data[index], data[index+1], color='blue', label='oxygen')
+    plt.scatter(data[index], data[index+1], color='blue', label='Oxygen')
 index += 2
 if data[index] != "":
-    plt.scatter(data[index], data[index+1], color='green', label='food')
+    plt.scatter(data[index], data[index+1], color='green', label='Food')
 index += 2
 if data[index] != "":
-    plt.scatter(data[index], data[index+1], color='red', marker='.', s=1, label='hostile')
+    plt.scatter(data[index], data[index+1], color='red', marker='.', s=1, label='Hostile')
     for i in range(len(data[index])):
         circle = Circle((data[index][i], data[index+1][i]), data[index+2][i], color='red', fill=False)
         ax.add_patch(circle)
