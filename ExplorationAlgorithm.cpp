@@ -155,8 +155,8 @@ const double phi = (3 - sqrt(5)) / 2;
 // Speed optimization by first derivative test: cost = c(x) = time + fuel + food + oxygen = d/v + Kf*d*v^2 + Kl*d/v + Kl*d/v
 // Cost minimized at c'(x) = 0 => (-d + 2*Kf*d*v^3 - Kl*d - Kl*d)/v^2 = 0 => v = cbrt((1 + Kl+Kl) / (2*Kf))
 const double idealSpeed = cbrt((1 + 2 * Kl) / (2 * Kf));
-const double resSpeed1 = cbrt((1 + Kl) / (2 * Kf)); // One resupply type remaining, ideal speed can disregard consumption of 1 resource type (1 Kl term)
-const double resSpeed2 = 1 / cbrt(2 * Kf);          // Both resupply types remaining, ideal speed can disregard consumption of both Kl terms
+const double resupSpeed1 = cbrt((1 + Kl) / (2 * Kf)); // One resupply type remaining, ideal speed can disregard consumption of 1 resource type (1 Kl term)
+const double resupSpeed2 = 1 / cbrt(2 * Kf);          // Both resupply types remaining, ideal speed can disregard consumption of both Kl terms
 
 /************************************************************ Input ************************************************************/
 
@@ -480,17 +480,17 @@ double calculateCost(const int node1, const int node2)
   switch (planets[node2].resupply)
   {
   case OXYGEN:
-    speed = resSpeed2 * cbrt(1 + (1 + foodProb) * Kl), t = d / speed;
+    speed = resupSpeed2 * cbrt(1 + (1 + foodProb) * Kl), t = d / speed;
     oxygenConsumed = 0;
     foodConsumed = (1 - foodProb) * Kl * t;
     break;
   case FOOD:
-    speed = resSpeed2 * cbrt(1 + (1 + oxygenProb) * Kl), t = d / speed;
+    speed = resupSpeed2 * cbrt(1 + (1 + oxygenProb) * Kl), t = d / speed;
     foodConsumed = 0;
     oxygenConsumed = (1 - oxygenProb) * Kl * t;
     break;
   default:
-    speed = resSpeed2 * cbrt(1 + (2 + oxygenProb + foodProb) * Kl), t = d / speed;
+    speed = resupSpeed2 * cbrt(1 + (2 + oxygenProb + foodProb) * Kl), t = d / speed;
     oxygenConsumed = (1 - oxygenProb) * Kl * t;
     foodConsumed = (1 - foodProb) * Kl * t;
     break;
@@ -536,7 +536,7 @@ void initializeLists()
   distances = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   initialCosts = vector<vector<double>>(nodeCount, vector<double>(nodeCount));
   // Heuristic constant for A* pathfinding (minimum cost per unit distance traveled)
-  const double heuristic = (1 + Kl) / resSpeed1 + Kf * resSpeed1 * resSpeed1;
+  const double heuristic = (1 + Kl) / resupSpeed1 + Kf * resupSpeed1 * resupSpeed1;
   hF = vector<double>(nodeCount, 0), hB = vector<double>(nodeCount, 0);
 
   int maxNeighbors = nodeCount - 1 - hostiles.size();
@@ -1321,12 +1321,12 @@ int optimizePath(const vector<int> &path, double &score, vector<double> &speeds,
   for (int i = 1; i <= minLastResupply; i++)
   {
     mb[i] = 1.0;
-    speeds[i] = resSpeed2;
+    speeds[i] = resupSpeed2;
   }
   for (int i = minLastResupply + 1; i <= maxLastResupply; i++)
   {
     mb[i] = 1 + Kl;
-    speeds[i] = resSpeed1;
+    speeds[i] = resupSpeed1;
   }
   for (int i = maxLastResupply + 1; i < pathLength; i++)
   {
