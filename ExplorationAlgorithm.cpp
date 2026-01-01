@@ -473,8 +473,8 @@ double calculateCost(const int node1, const int node2)
 {
   double d = distances[node1][node2];
   // Determine speed based on probability that there is food/oxygen resupply left in path
-  double foodProb = foodCount / (double)nodeCount;
-  double oxygenProb = oxygenCount / (double)nodeCount;
+  double foodProb = foodCount / (double) nodeCount;
+  double oxygenProb = oxygenCount / (double) nodeCount;
   double fuelConsumed, oxygenConsumed, foodConsumed, t, speed;
   switch (planets[node2].resupply)
   {
@@ -1510,7 +1510,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
     return;
   }
 
-  int indexWidth = (int)log10(pathLength - 1) + 1;
+  int indexWidth = (int) log10(pathLength - 1) + 1;
   if (longestNameLength < 6)
     longestNameLength = 6;
   vector<string> speedStrings(pathLength);
@@ -1545,10 +1545,10 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
     switch (planet.resupply)
     {
     case OXYGEN:
-      o = "->" + to_string((int)MaxOxygen);
+      o = "->" + to_string((int) MaxOxygen);
       break;
     case FOOD:
-      fo = "->" + to_string((int)MaxFood);
+      fo = "->" + to_string((int) MaxFood);
       break;
     default:
       break;
@@ -1788,15 +1788,16 @@ int main(int argc, char *argv[])
   // e.g. ./ExplorationAlgorithm --map=ExampleMap.csv
   int opt, index;
   static struct option long_options[] =
-      {
-          {"map", required_argument, 0, 'm'},       // Input map file name (with extension)
-          {"batchSize", required_argument, 0, 'b'}, // Paths to generate each batch, defaults to 5 * nodeCount (larger batch => >accuracy, <performance)
-          {"testPath", required_argument, 0, 't'},  // Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
-          {"plotMap", required_argument, 0, 'p'},   // If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
-          {"randomMap", required_argument, 0, 'r'}, // If 1, generates random map in RandomMap.csv with specified paremeters
-          {"distScale", required_argument, 0, 'd'}, // Scales all planet distances by constant factor distScale (simulate extreme conditions)
-          {"quickTest", required_argument, 0, 'q'}, // Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)
-          {0, 0, 0, 0}};
+  {
+    {"map", required_argument, 0, 'm'},       // Input map file name (with extension)
+    {"batchSize", required_argument, 0, 'b'}, // Paths to generate each batch, defaults to 5 * nodeCount (larger batch => >accuracy, <performance)
+    {"testPath", required_argument, 0, 't'},  // Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
+    {"plotMap", required_argument, 0, 'p'},   // If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
+    {"randomMap", required_argument, 0, 'r'}, // If 1, generates random map in RandomMap.csv with specified paremeters
+    {"distScale", required_argument, 0, 'd'}, // Scales all planet distances by constant factor distScale (simulate extreme conditions)
+    {"quickTest", required_argument, 0, 'q'}, // Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)
+    {0, 0, 0, 0}
+  };
   while ((opt = getopt_long(argc, argv, "m:b:t:p:r:d:q:", long_options, &index)) != -1)
   {
     switch (opt)
@@ -1866,7 +1867,7 @@ int main(int argc, char *argv[])
     initializeLists();
     if (batchSize <= 0)
     {
-      batchSize = (int)3 * nodeCount;
+      batchSize = (int) 3 * nodeCount;
       if (batchSize > 500)
         batchSize = 500;
     }
@@ -1875,7 +1876,7 @@ int main(int argc, char *argv[])
     vector<double> bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood; // Raw = pre-resupply
     vector<double> fbSpeeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood;             // Raw = pre-resupply
     double fbScore = INF;
-    // int bestIndex;
+    //int bestIndex;
     bool validPath = true;
     // Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
     // If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
@@ -1898,7 +1899,7 @@ int main(int argc, char *argv[])
       else
       {
         double score/*, minFuelCons = INF*/;
-        int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int)bestPaths.size());
+        int startBatch = batchSize * i, endBatch = min(startBatch + batchSize, (int) bestPaths.size());
         for (int j = startBatch; j < endBatch; j++) // Only optimize out of paths in current batch for performance
         {
           vector<int> &path = bestPaths[j];
@@ -1912,7 +1913,7 @@ int main(int argc, char *argv[])
           if (error == 0)
           {
             if (score < bestScore)
-              bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood; //, bestIndex = j;
+              bestScore = score, bestPath = path, bestSpeeds = speeds, bestFuel = fuel, bestOxygen = oxygen, bestFood = food, bestRawOxygen = rawOxygen, bestRawFood = rawFood;//, bestIndex = j;
           }
           else
           {
@@ -1926,7 +1927,7 @@ int main(int argc, char *argv[])
         if (bestScore < INF)
         {
           printData(bestPath, bestSpeeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-          // cout << "Paths searched: " << bestIndex+1 << endl;
+          //cout << "Paths searched: " << bestIndex + 1 << endl;
           break;
         }
         if (i == maxIterations - 1 /*|| minFuelCons > 10 * MaxFuel*/)
