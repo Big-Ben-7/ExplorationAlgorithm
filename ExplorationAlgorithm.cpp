@@ -111,7 +111,7 @@ struct SlopeOptimizeData
   }
 };
 
-//Command line options (for testing/debugging)
+//Command line options (for quick testing/debugging)
 int batchSize = 0;
 double distScale = 1.0;
 int inputPath = 0;
@@ -607,16 +607,17 @@ void initializeLists()
     neighborList.reserve(maxNeighbors);
   for (int i = 0; i < nodeCount; i++)
   {
-    double hostileRadius = planets[i].hostileRadius;
+    PlanetData &planet = planets[i];
+    double hostileRadius = planet.hostileRadius;
     for (int j = i + 1; j < nodeCount; j++)
     {
-      double distance = distances[i][j] = distances[j][i] = calculateDistance(planets[i].position, planets[j].position);
+      double distance = distances[i][j] = distances[j][i] = calculateDistance(planet.position, planets[j].position);
       //Eliminate edges crossing hostile radius
       if (hostileRadius != 0 || planets[j].hostileRadius != 0 || edgeInHostileRadius(i, j))
       {
         costs[i][j] = initialCosts[i][j] = costs[j][i] = initialCosts[j][i] = INF;
         if (j == lastNode)
-          hF[i] = heuristic * calculateDistance(planets[i].position, sinkPos);
+          hF[i] = heuristic * calculateDistance(planet.position, sinkPos);
         if (i == 0)
           hB[j] = heuristic * calculateDistance(planets[j].position, sourcePos);
         continue;
@@ -772,9 +773,9 @@ int yens(set<Path> &potentialPaths, vector<Path> &bestPaths, int pathCount, Path
         bool resup = planets[i].resupply != NONE;
         for (int j = i + 1; j < nodeCount; j++)
         {
-          if (initialCosts[i][j] < INF && planets[j].resupply != NONE) 
+          if (initialCosts[i][j] < INF && planets[j].resupply != NONE)
             initialCosts[i][j] *= cf;
-          if (initialCosts[j][i] < INF && resup) 
+          if (initialCosts[j][i] < INF && resup)
             initialCosts[j][i] *= cf;
         }
       }
@@ -1648,7 +1649,6 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   }
 
   cout << endl
-       << endl
        << "PROGRAM OUTPUT" << endl;
   cout << "Map name: " << mapName << endl;
   cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNode].name << " (included)" << endl
@@ -1912,12 +1912,14 @@ int rawTestPath(string &xPath, string &yPath)
 
 int main(int argc, char *argv[])
 {
-  //Command line options for terminal input (for testing)
+  //Command line options for terminal input (for quick testing)
   //e.g. ./ExplorationAlgorithm --map=ExampleMap.csv
   int opt, index;
   static struct option long_options[] =
   {
       {"map", required_argument, 0, 'm'},       //Input map file name (with extension)
+
+      //Testing features
       {"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 5 * nodeCount (larger batch => >accuracy, <performance)
       {"testPath", required_argument, 0, 't'},  //Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
       {"plotMap", required_argument, 0, 'p'},   //If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
@@ -1996,7 +1998,7 @@ int main(int argc, char *argv[])
     initializeLists();
     if (batchSize <= 0)
     {
-      batchSize = (int)3 * nodeCount;
+      batchSize = (int) 3 * nodeCount;
       if (batchSize > 150)
         batchSize = 150;
     }
@@ -2012,7 +2014,7 @@ int main(int argc, char *argv[])
     vector<Path> bestPaths;
     for (int i = 0; i < maxIterations; i++)
     {
-      Path cbPath, cfbPath;
+      Path cbPath, cfbPath; //Current best/best fallback paths
       int iy = yens(potentialPaths, bestPaths, batchSize, cbPath, cfbPath, i);
       if (iy == -1)
       {
@@ -2049,6 +2051,7 @@ int main(int argc, char *argv[])
         if (i == 0)
           cout << endl;
         //cout << "iter:" << i << ", " << iy << ", " << bestPaths.size() << ", " << nWorseBatches << ", " << prevBest.score << ", " << cbPath.score << ", " << bestPath.score <<  ", " << minFuelCons << endl;
+        //Keep going unless best score in batch has increased 2 times in a row
         if (cbPath.score < INF || prevBest.score < INF)
         {
           if (cbPath.score <= prevBest.score)
@@ -2058,9 +2061,7 @@ int main(int argc, char *argv[])
             continue;
           }
           else
-          {
             nWorseBatches++;
-          }
           if (nWorseBatches < 2)
             continue;
         }
