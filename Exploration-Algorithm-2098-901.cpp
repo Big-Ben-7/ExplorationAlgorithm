@@ -1,21 +1,3 @@
-/*
- * TSA Coding 2025-2026: Exploration Algorithm
- * TEAM: 2098-901
- * LANGUAGE: C++20 (chosen for performance), Python was also used but only for testing
- * SOFTWARE: Visual Studio Code
- *
- * RESOURCES
- * The following classical algorithms were implemented in our program:
- * 1. Bidirectional A* (for pathfinding)
- * 2. Yen's algorithm (for pathfinding)
- * 3. Bisection method (for root-finding)
- * 4. Brent's method (for minimization)
- * As per the TSA event guide rules, only the language's standard library (std) was used (no 3rd-party libraries)
- * (Obviously no AI was used in the making of this project)
- *
- * NOTE: Since this program is kind of long, our team organized it into regions and added descriptive comments to improve readability
- */
-
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -131,7 +113,7 @@ vector<PlanetData> planets;
 vector<HostilePlanet> hostiles;
 int nodeCount, foodCount, oxygenCount, lastNode, longestNameLength;
 chrono::steady_clock::time_point startTime;
-string fileName = "", mapName;
+string fileName = "";
 
 void printPath(const string id, const vector<int> &path, const vector<double> &speeds, const double score);
 int optimizePath(const vector<int> &path, double &score, vector<double> &speeds, vector<double> &fuel,
@@ -256,7 +238,6 @@ int parseCSV()
   }
   ifstream iFile;
   string line = "";
-  mapName = fileName.substr(0, fileName.rfind('.'));
   iFile.open(fileName);
   if (!iFile.is_open())
   {
@@ -1650,10 +1631,10 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
 
   cout << endl
        << "PROGRAM OUTPUT" << endl;
-  cout << "Map name: " << mapName << endl;
+  cout << "Map name: " << fileName << endl;
   cout << "Planet travel order from " << planets[0].name << " (excluded) to " << planets[lastNode].name << " (included)" << endl
        << endl;
-  cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(12) << "Distance |" << setw(12) << "Time |" << setw(13) << "Fuel |" << setw(11) << "Oxygen" << setw(8) << "Res. |" << setw(11) << "Food" << setw(8) << "Res. |" << setw(13) << "Score |" << endl;
+  cout << right << setw(longestNameLength + indexWidth + 5) << "Planet |" << setw(longestSpeedLength + 3) << "Speed To Planet |" << setw(12) << "Distance |" << setw(12) << "Tot. Time |" << setw(13) << "Fuel |" << setw(11) << "Oxygen" << setw(8) << "Resup|" << setw(11) << "Food" << setw(8) << "Resup|" << setw(13) << "Score |" << endl;
   int width = longestNameLength + indexWidth + longestSpeedLength + 93;
   cout << scientific << setprecision(3);
   double travelTime = 0.0;
@@ -1695,7 +1676,7 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   }
   cout << "* Note: Some values are in scientific notation for consistent formatting (e.g. 6.67e-02 = 0.0667)" << endl;
   cout << endl
-       << "Final stats" << endl;
+       << "Final stats (all units AU)" << endl;
   double fuelLeft = fuel.back(), oxygenLeft = oxygen.back(), foodLeft = food.back();
   cout << "Total time: " << defaultfloat << setprecision(8) << travelTime << endl;
   cout << "Total Distance: " << travelDistance << endl;
@@ -1913,29 +1894,28 @@ int rawTestPath(string &xPath, string &yPath)
 int main(int argc, char *argv[])
 {
   //Command line options for terminal input (for quick testing)
-  //e.g. ./ExplorationAlgorithm --map=ExampleMap.csv
   int opt, index;
   static struct option long_options[] =
   {
-      {"map", required_argument, 0, 'm'},       //Input map file name (with extension)
-
+      {"map", required_argument, 0, 'm'}, //Input map file name (with extension)
+      
       //Testing features
-      {"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 5 * nodeCount (larger batch => >accuracy, <performance)
+      /*{"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 3 * nodeCount (larger batch => >accuracy, <performance)
       {"testPath", required_argument, 0, 't'},  //Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
       {"plotMap", required_argument, 0, 'p'},   //If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
       {"randomMap", required_argument, 0, 'r'}, //If 1, generates random map in RandomMap.csv with specified paremeters
       {"distScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distScale (simulate extreme conditions)
-      {"quickTest", required_argument, 0, 'q'}, //Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)
+      {"quickTest", required_argument, 0, 'q'}, //Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)*/
       {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:b:t:p:r:d:q:", long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:"/*"m:b:t:p:r:d:q:"*/, long_options, &index)) != -1)
   {
     switch (opt)
     {
     case 'm':
       fileName = optarg;
       break;
-    case 'b':
+    /*case 'b':
       batchSize = atoi(optarg);
       break;
     case 't':
@@ -1952,7 +1932,7 @@ int main(int argc, char *argv[])
       break;
     case 'q':
       quickTest = atoi(optarg);
-      break;
+      break;*/
     default:
       break;
     }
@@ -2091,7 +2071,7 @@ int main(int argc, char *argv[])
     long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
     double milliseconds = calcTime / 1000.0;
     cout << endl
-         << "Calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
+         << "Total calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
 
     //Output map and path data to PlotterData.csv for testing
     if (plotMap > 0)
