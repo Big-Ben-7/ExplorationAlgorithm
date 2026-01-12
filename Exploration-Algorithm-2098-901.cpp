@@ -96,16 +96,6 @@ struct SlopeOptimizeData
   }
 };
 
-//Command line options (for quick testing/debugging)
-int batchSize = 0;
-double distScale = 1.0;
-int inputPath = 0;
-int plotMap = 0;
-int randomMap = 0;
-int lastPN;
-double lastMP, lastHR, lastHP, lastOP, lastFP;
-int quickTest = 0;
-
 //Contains list of adjacent nodes for each node, speeds up neighbor expansion in pathfinding
 vector<vector<int>> neighbors;
 //3 adjacency matrix structures to efficiently represent graph
@@ -472,16 +462,6 @@ int parseCSV()
 
   nodeCount = planets.size();
   lastNode = nodeCount - 1;
-  if (fabs(distScale - 1) > EPS) //Scale map (test extreme conditions)
-  {
-    for (PlanetData &planet : planets)
-    {
-      Position &pos = planet.position;
-      pos.x *= distScale;
-      pos.y *= distScale;
-      planet.hostileRadius *= distScale;
-    }
-  }
   hostiles.reserve(hostileCount);
   foodCount = 0;
   oxygenCount = 0;
@@ -1689,560 +1669,126 @@ void printData(const vector<int> &path, const vector<double> &speeds, const vect
   cout << "Score: " << travelTime - (fuelLeft + oxygenLeft + foodLeft) << endl;
 }
 
-/************************************************************ Testing/Development Features ************************************************************/
-//Writes random map to RandomMap.csv with specified parameters (testing pathfinding/resources)
-int generateRandomMap(bool useLast = false)
+int main(int argc, char *argv[])
 {
-  cout << endl;
-  int planetNumber;
-  double maxPos, maxRad, hosProb, oxygenProb, foodProb;
-  if (useLast)
-    planetNumber = lastPN, maxPos = lastMP, maxRad = lastHR, hosProb = lastHP, oxygenProb = lastOP, foodProb = lastFP;
-  else
+  cout << endl
+       << "Welcome Mission Control!" << endl;
+  if (fileName.empty())
   {
-    cout << "Input parameters for random map generation" << endl;
-    string input;
-    cout << "Planet number (return for default 50): ";
-    getline(cin, input);
-    if (input == "")
-      input = "50";
-    planetNumber = stoi(input);
-    cout << "Max pos (return for default 100): ";
-    getline(cin, input);
-    if (input == "")
-      input = "100";
-    maxPos = stod(input);
-    cout << "Max hostile radius (return for default 10): ";
-    getline(cin, input);
-    if (input == "")
-      input = "10";
-    maxRad = stod(input);
-    cout << "Hostile probability (return for default 0.1): ";
-    getline(cin, input);
-    if (input == "")
-      input = "0.1";
-    hosProb = stod(input);
-    cout << "Oxygen resupply probability (return for default 0.1): ";
-    getline(cin, input);
-    if (input == "")
-      input = "0.1";
-    oxygenProb = stod(input);
-    cout << "Food resupply probability (return for default 0.1): ";
-    getline(cin, input);
-    if (input == "")
-      input = "0.1";
-    foodProb = stod(input);
-    lastPN = planetNumber, lastMP = maxPos, lastHR = maxRad, lastHP = hosProb, lastOP = oxygenProb, lastFP = foodProb;
+    cout << "Use these instructions to begin stress-testing:" << endl;
+    cout << endl;
+    cout << "This program expects a .csv map file formatted as per the challenge guide (Planet Name,x,y,type,resupply,hostile_radius)." << endl;
+    cout << "It will output the best route from the first planet in the file (right after the header line) to the planet on the last line of the file." << endl;
+    cout << endl;
+    cout << "Put the CSV file in the same directory/folder as this program and then simply input the file name below (e.g. ExampleMap.csv)." << endl;
+    cout << "If the map cannot be placed in this folder, the full file path can be provided:" << endl;
+    cout << "e.g. C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
   }
 
-  random_device rd;
-  mt19937 engine(rd());
-  uniform_real_distribution<double> xPos(-maxPos, maxPos);
-  uniform_real_distribution<double> yPos(-maxPos, maxPos);
-  uniform_real_distribution<double> res(0, 1);
-  uniform_real_distribution<double> hos(0, 1);
-  uniform_real_distribution<double> rad(0.1, maxRad);
-
-  ofstream outFile("RandomMap.csv");
-  if (!outFile.is_open())
+  //Input and setup
+  int error;
+  do
   {
-    cout << "Error outputting map to file RandomMap.csv." << endl;
-    return -1;
-  }
-  outFile << "Planet Name,x,y,type,resupply,hostile_radius" << endl;
-  for (int i = 0; i < planetNumber; i++)
+    planets.clear();
+    hostiles.clear();
+    error = parseCSV();
+    if (error != 0)
+      fileName = "";
+  } while (error != 0);
+
+  //Pathfinding and speed/resource optimization
+  initializeLists();
+  int batchSize = (int) 3 * nodeCount;
+  if (batchSize > 150)
+    batchSize = 150;
+  Path bestPath, fbPath, prevBest;                                           //Fallback path if no valid best path is found
+  vector<double> bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood; //Raw = pre-resupply
+  vector<double> fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood;           //Raw = pre-resupply
+  int nWorseBatches = 0;
+  bool validPath = true;
+  //Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
+  //If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
+  int maxIterations = 100;
+  set<Path> potentialPaths;
+  vector<Path> bestPaths;
+  for (int i = 0; i < maxIterations; i++)
   {
-    double x = xPos(engine), y = yPos(engine);
-    if (i == 0)
-      x = y = -maxPos / 1.5;
-    if (i == planetNumber - 1)
-      x = y = maxPos / 1.5;
-
-    double rand = res(engine);
-    string resupply = "";
-    if (i != 0 && i != planetNumber - 1) //Ensure start/target are not resupplies
+    Path cbPath, cfbPath; //Current best/best fallback paths
+    int iy = yens(potentialPaths, bestPaths, batchSize, cbPath, cfbPath, i);
+    if (iy == -1)
     {
-      if (rand < oxygenProb)
-        resupply = "Oxygen";
-      else if (rand < oxygenProb + foodProb)
-        resupply = "Food";
-    }
-
-    string hosType;
-    double hosRad;
-    //Ensure start/target are neutral and outside hostile radius
-    if (hos(engine) <= hosProb && i != 0 &&
-        i != planetNumber - 1 &&
-        calculateDistance(Position(x, y), Position(-maxPos / 1.5, -maxPos / 1.5)) > maxRad &&
-        calculateDistance(Position(x, y), Position(maxPos / 1.5, maxPos / 1.5)) > maxRad)
-    {
-      hosType = "Hostile";
-      hosRad = rad(engine);
+      if (bestPath.score < INF)
+      {
+        calculateResources(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestPath.score);
+        printData(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        break;
+      }
+      validPath = false;
+      if (fbPath.path.empty())
+      {
+        cout << endl
+              << "A valid path could not be found. Please try a different map." << endl;
+        break;
+      }
+      calculateResources(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood, fbPath.score);
+      printData(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood);
+      cout << endl
+            << "INVALID PATH: Please try a different map." << endl;
+      break;
     }
     else
     {
-      hosType = "Neutral";
-      hosRad = 0;
-    }
-    outFile << i << "," << x << "," << y << "," << hosType << "," << resupply << "," << hosRad << endl;
-  }
-  outFile.close();
-  //cout << "Map data successfully outputted to RandomMap.csv" << endl;
-  return 0;
-}
-//Takes path input, optimizes speed and outputs score data (testing path optimality)
-int testPath(string &xPath, string &yPath)
-{
-  string input;
-  cout << endl
-       << "Path (excluding " << planets[0].name << ", return to exit): ";
-  getline(cin, input);
-  if (input.empty())
-    return -1;
-  cout << endl;
-  input = planets[0].name + "," + input;
-  int commaCount = count(input.begin(), input.end(), ',');
-  vector<int> path;
-  for (int i = 0; i < commaCount; i++)
-  {
-    int commaIndex = input.find(',');
-    string planet = trim(input.substr(0, commaIndex));
-    input = input.substr(commaIndex + 1);
-    for (int i = 0; i < planets.size(); i++)
-    {
-      if (planets[i].name != planet)
-        continue;
-      path.push_back(i);
-      break;
-    }
-  }
-  string planet = trim(input);
-  for (int i = 0; i < planets.size(); i++)
-  {
-    if (planets[i].name != planet)
-      continue;
-    path.push_back(i);
-    break;
-  }
-  int pathLength = commaCount + 1;
-  vector<double> speeds(pathLength), fuel(pathLength), oxygen(pathLength), food(pathLength), rawOxygen(pathLength), rawFood(pathLength);
-  double score = INF;
-  if (optimizePath(path, score, speeds, fuel, oxygen, food, rawOxygen, rawFood) == 0)
-    printData(path, speeds, fuel, oxygen, food, rawOxygen, rawFood);
-  else
-    cout << "Invalid path (resources run out)" << endl;
-  for (int i = 0; i < pathLength; i++)
-  {
-    xPath += "," + to_string(planets[path[i]].position.x);
-    yPath += "," + to_string(planets[path[i]].position.y);
-  }
-  return 0;
-}
-//Takes path and speed input, outputs raw score data (testing data calcs)
-int rawTestPath(string &xPath, string &yPath)
-{
-  string input, input2;
-  cout << endl
-       << "Path (excluding start, return to exit): ";
-  getline(cin, input);
-  if (input.empty())
-    return -1;
-  input = planets[0].name + "," + input;
-  cout << "Speeds (return to exit): ";
-  getline(cin, input2);
-  if (input2.empty())
-    return -1;
-  int commaCount = count(input.begin(), input.end(), ',');
-  vector<int> path;
-  vector<double> speeds;
-  for (int i = 0; i < commaCount; i++)
-  {
-    int commaIndex = input.find(',');
-    string planet = trim(input.substr(0, commaIndex));
-    input = input.substr(commaIndex + 1);
-    for (int i = 0; i < planets.size(); i++)
-    {
-      if (planets[i].name != planet)
-        continue;
-      path.push_back(i);
-      break;
-    }
-    commaIndex = input2.find(',');
-    speeds.push_back(stod(trim(input2.substr(0, commaIndex))));
-    input2 = input2.substr(commaIndex + 1);
-  }
-  speeds.push_back(stod(trim(input2)));
-  string planet = trim(input);
-  for (int i = 0; i < planets.size(); i++)
-  {
-    if (planets[i].name != planet)
-      continue;
-    path.push_back(i);
-    break;
-  }
-  int pathLength = path.size();
-  vector<double> fuel, oxyg, food, rawOxyg, rawFood;
-  double score;
-  calculateResources(path, speeds, fuel, oxyg, food, rawOxyg, rawFood, score);
-  printData(path, speeds, fuel, oxyg, food, rawOxyg, rawFood);
-
-  for (int i = 0; i < pathLength; i++)
-  {
-    xPath += "," + to_string(planets[path[i]].position.x);
-    yPath += "," + to_string(planets[path[i]].position.y);
-  }
-  return 0;
-}
-
-int main(int argc, char *argv[])
-{
-  /*//Command line options for terminal input (for quick testing)
-  int opt, index;
-  static struct option long_options[] =
-  {
-      {"map", required_argument, 0, 'm'}, //Input map file name (with extension)
-      
-      //Testing features
-      {"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 3 * nodeCount (larger batch => >accuracy, <performance)
-      {"testPath", required_argument, 0, 't'},  //Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
-      {"plotMap", required_argument, 0, 'p'},   //If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
-      {"randomMap", required_argument, 0, 'r'}, //If 1, generates random map in RandomMap.csv with specified paremeters
-      {"distScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distScale (simulate extreme conditions)
-      {"quickTest", required_argument, 0, 'q'}, //Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)
-      {0, 0, 0, 0}
-  };
-  while ((opt = getopt_long(argc, argv, "m:b:t:p:r:d:q:", long_options, &index)) != -1)
-  {
-    switch (opt)
-    {
-    case 'm':
-      fileName = optarg;
-      break;
-    case 'b':
-      batchSize = atoi(optarg);
-      break;
-    case 't':
-      inputPath = atoi(optarg);
-      break;
-    case 'p':
-      plotMap = atoi(optarg);
-      break;
-    case 'r':
-      randomMap = atoi(optarg);
-      break;
-    case 'd':
-      distScale = atof(optarg);
-      break;
-    case 'q':
-      quickTest = atoi(optarg);
-      break;
-    default:
-      break;
-    }
-  }*/
-
-  cout << endl
-       << "Welcome Mission Control!" << endl;
-  int counter = 0;
-  while (quickTest || counter == 0)
-  {
-    if (randomMap > 0)
-    {
-      if (counter == 0 || quickTest == 2)
-        generateRandomMap();
-      else
-        generateRandomMap(true);
-    }
-    counter++;
-    if (fileName.empty())
-    {
-      cout << "Use these instructions to begin stress-testing:" << endl;
-      cout << endl;
-      cout << "This program expects a .csv map file formatted as per the challenge guide (Planet Name,x,y,type,resupply,hostile_radius)." << endl;
-      cout << "It will output the best route from the first planet in the file (right after the header line) to the planet on the last line of the file." << endl;
-      cout << endl;
-      cout << "Put the CSV file in the same directory/folder as this program and then simply input the file name below (e.g. ExampleMap.csv)." << endl;
-      cout << "If the map cannot be placed in this folder, the full file path can be provided:" << endl;
-      cout << "e.g. C:\\Users\\Your Username\\Folder Name\\ExampleMap.csv on Windows or /Users/Your Username/Folder Name/ExampleMap.csv on Mac." << endl;
-    }
-
-    //Input and setup
-    int error;
-    do
-    {
-      planets.clear();
-      hostiles.clear();
-      error = parseCSV();
-      if (error != 0)
-        fileName = "";
-    } while (error != 0);
-
-    //Pathfinding and speed/resource optimization
-    initializeLists();
-    if (batchSize <= 0)
-    {
-      batchSize = (int) 3 * nodeCount;
-      if (batchSize > 150)
-        batchSize = 150;
-    }
-    Path bestPath, fbPath, prevBest;                                           //Fallback path if no valid best path is found
-    vector<double> bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood; //Raw = pre-resupply
-    vector<double> fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood;           //Raw = pre-resupply
-    int nWorseBatches = 0;
-    bool validPath = true;
-    //Finds batch of size pathCount best paths, optimizes speed for each path in bestPaths and selects the best out of them for output
-    //If no valid path is found, generates another batch of next pathCount best paths until valid path is found or 100000 paths searched
-    int maxIterations = 100;
-    set<Path> potentialPaths;
-    vector<Path> bestPaths;
-    for (int i = 0; i < maxIterations; i++)
-    {
-      Path cbPath, cfbPath; //Current best/best fallback paths
-      int iy = yens(potentialPaths, bestPaths, batchSize, cbPath, cfbPath, i);
-      if (iy == -1)
+      double minFuelCons = INF;
+      if (cbPath.error == 0 && cbPath.score < INF)
       {
-        if (bestPath.score < INF)
+        if (cbPath.score < bestPath.score)
+          bestPath = cbPath;
+      }
+      if (cfbPath.score < fbPath.score)
+        fbPath = cfbPath;
+      minFuelCons = min(cbPath.fuelConsumed, cfbPath.fuelConsumed);
+      if (i == 0)
+        cout << endl;
+      //cout << "iter:" << i << ", " << iy << ", " << bestPaths.size() << ", " << nWorseBatches << ", " << prevBest.score << ", " << cbPath.score << ", " << bestPath.score <<  ", " << minFuelCons << endl;
+      //Keep going unless best score in batch has increased 2 times in a row
+      if (cbPath.score < INF || prevBest.score < INF)
+      {
+        if (cbPath.score <= prevBest.score)
         {
-          calculateResources(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestPath.score);
-          printData(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-          break;
+          prevBest = cbPath;
+          nWorseBatches = 0;
+          continue;
         }
+        else
+          nWorseBatches++;
+        if (nWorseBatches < 2)
+          continue;
+      }
+      if (i > 5 && bestPath.score < INF)
+      {
+        calculateResources(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestPath.score);
+        printData(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
+        break;
+      }
+      if (i == maxIterations - 1)
+      {
         validPath = false;
         if (fbPath.path.empty())
         {
           cout << endl
-               << "A valid path could not be found. Please try a different map." << endl;
+                << "A valid path could not be found. Please try a different map." << endl;
           break;
         }
         calculateResources(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood, fbPath.score);
         printData(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood);
         cout << endl
-             << "INVALID PATH: Please try a different map." << endl;
+              << "INVALID PATH: Please try a different map." << endl;
         break;
       }
-      else
-      {
-        double minFuelCons = INF;
-        if (cbPath.error == 0 && cbPath.score < INF)
-        {
-          if (cbPath.score < bestPath.score)
-            bestPath = cbPath;
-        }
-        if (cfbPath.score < fbPath.score)
-          fbPath = cfbPath;
-        minFuelCons = min(cbPath.fuelConsumed, cfbPath.fuelConsumed);
-        if (i == 0)
-          cout << endl;
-        //cout << "iter:" << i << ", " << iy << ", " << bestPaths.size() << ", " << nWorseBatches << ", " << prevBest.score << ", " << cbPath.score << ", " << bestPath.score <<  ", " << minFuelCons << endl;
-        //Keep going unless best score in batch has increased 2 times in a row
-        if (cbPath.score < INF || prevBest.score < INF)
-        {
-          if (cbPath.score <= prevBest.score)
-          {
-            prevBest = cbPath;
-            nWorseBatches = 0;
-            continue;
-          }
-          else
-            nWorseBatches++;
-          if (nWorseBatches < 2)
-            continue;
-        }
-        if (i > 5 && bestPath.score < INF)
-        {
-          calculateResources(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood, bestPath.score);
-          printData(bestPath.path, bestPath.speeds, bestFuel, bestOxygen, bestFood, bestRawOxygen, bestRawFood);
-          break;
-        }
-        if (i == maxIterations - 1)
-        {
-          validPath = false;
-          if (fbPath.path.empty())
-          {
-            cout << endl
-                 << "A valid path could not be found. Please try a different map." << endl;
-            break;
-          }
-          calculateResources(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood, fbPath.score);
-          printData(fbPath.path, fbPath.speeds, fbFuel, fbOxygen, fbFood, fbRawOxygen, fbRawFood);
-          cout << endl
-               << "INVALID PATH: Please try a different map." << endl;
-          break;
-        }
-      }
     }
-    long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
-    double milliseconds = calcTime / 1000.0;
-    cout << endl
-         << "Total calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
-
-    //Output map and path data to PlotterData.csv for testing
-    if (plotMap > 0)
-    {
-      string xEndpt = "", yEndpt = "", xNone = "", yNone = "", xFood = "", yFood = "", xOxygen = "", yOxygen = "", xHostile = "", yHostile = "", rHostile = "", xPath = "", yPath = "";
-      for (int i = 0; i < nodeCount; i++)
-      {
-        PlanetData planet = planets[i];
-        if (i == 0 || i == lastNode)
-        {
-          xEndpt += "," + to_string(planet.position.x);
-          yEndpt += "," + to_string(planet.position.y);
-          continue;
-        }
-        if (planet.hostileRadius > 0)
-        {
-          xHostile += "," + to_string(planet.position.x);
-          yHostile += "," + to_string(planet.position.y);
-          rHostile += "," + to_string(planet.hostileRadius);
-          continue;
-        }
-        switch (planet.resupply)
-        {
-        case NONE:
-          xNone += "," + to_string(planet.position.x);
-          yNone += "," + to_string(planet.position.y);
-          break;
-        case FOOD:
-          xFood += "," + to_string(planet.position.x);
-          yFood += "," + to_string(planet.position.y);
-          break;
-        case OXYGEN:
-          xOxygen += "," + to_string(planet.position.x);
-          yOxygen += "," + to_string(planet.position.y);
-          break;
-        default:
-          break;
-        }
-      }
-      if (validPath)
-      {
-        for (int i = 0; i < bestPath.path.size(); i++)
-        {
-          xPath += "," + to_string(planets[bestPath.path[i]].position.x);
-          yPath += "," + to_string(planets[bestPath.path[i]].position.y);
-        }
-      }
-      else
-      {
-        if (fbPath.path.empty())
-        {
-          xPath += ",";
-          yPath += ",";
-        }
-        else
-        {
-          for (int i = 0; i < fbPath.path.size(); i++)
-          {
-            xPath += "," + to_string(planets[fbPath.path[i]].position.x);
-            yPath += "," + to_string(planets[fbPath.path[i]].position.y);
-          }
-          yPath += ",0"; //Invalid path indicator
-        }
-      }
-      ofstream outFile("PlotterData.csv");
-      if (outFile.is_open())
-      {
-        outFile << xEndpt.substr(1) << endl;
-        outFile << yEndpt.substr(1) << endl;
-        if (!xNone.empty())
-          outFile << xNone.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!yNone.empty())
-          outFile << yNone.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!xOxygen.empty())
-          outFile << xOxygen.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!yOxygen.empty())
-          outFile << yOxygen.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!xFood.empty())
-          outFile << xFood.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!yFood.empty())
-          outFile << yFood.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!xHostile.empty())
-          outFile << xHostile.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!yHostile.empty())
-          outFile << yHostile.substr(1) << endl;
-        else
-          outFile << "," << endl;
-        if (!rHostile.empty())
-          outFile << rHostile.substr(1) << endl;
-        else
-          outFile << "," << endl;
-
-        outFile << xPath.substr(1) << endl;
-        outFile << yPath.substr(1) << endl;
-
-        //Tests inputted path and speeds (inputPath=1,3) or tests and optimizes speeds on inputted path (inputPath=2,3)
-        //Adds tested paths to plot data as well
-        while (inputPath == 1 || inputPath == 3)
-        {
-          xPath = to_string(planets[0].position.x), yPath = to_string(planets[0].position.y);
-          if (rawTestPath(xPath, yPath) == -1)
-            break;
-          outFile << xPath << endl;
-          outFile << yPath << endl;
-        }
-        while (inputPath == 2 || inputPath == 3)
-        {
-          xPath = "", yPath = "";
-          if (testPath(xPath, yPath) == -1)
-            break;
-          outFile << xPath.substr(1) << endl;
-          outFile << yPath.substr(1) << endl;
-        }
-        outFile.close();
-      }
-      else
-      {
-        cout << "Error outputting map data to file PlotterData.csv." << endl;
-        cout << endl;
-      }
-
-      cout << endl;
-      if (system("python3 ./GraphPlotter.py") != 0)
-        cout << "Error running GraphPlotter.py." << endl;
-    }
-    else
-    {
-      //Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
-      while (inputPath == 1 || inputPath == 3)
-      {
-        string xPath = "", yPath = "";
-        if (rawTestPath(xPath, yPath) == -1)
-          break;
-      }
-      while (inputPath == 2 || inputPath == 3)
-      {
-        string xPath = "", yPath = "";
-        if (testPath(xPath, yPath) == -1)
-          break;
-      }
-    }
-
-    if (quickTest == 1)
-    {
-      cout << endl
-           << "Return to continue: ";
-      string str;
-      getline(cin, str);
-      if (str.empty())
-        continue;
-      else
-        break;
-    }
-    else
-      break;
   }
+  long long calcTime = chrono::duration_cast<chrono::microseconds>(chrono::steady_clock::now() - startTime).count();
+  double milliseconds = calcTime / 1000.0;
+  cout << endl
+        << "Total calculation time: " << fixed << setprecision(6) << milliseconds / 1000 << " seconds (" << setprecision(3) << milliseconds << " milliseconds)" << endl;
 }
