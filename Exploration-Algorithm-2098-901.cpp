@@ -9,13 +9,16 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
-#include <getopt.h>
+//#include <getopt.h>
 #include <array>
 #include <set>
 #include <random>
 #include <cstdlib>
 using namespace std;
 
+#ifndef M_PI_2
+#define M_PI_2 1.57079632679489661923132169163975144
+#endif
 #define Kf 0.15
 #define Kl 0.3
 #define MaxFuel 3000
@@ -1893,29 +1896,29 @@ int rawTestPath(string &xPath, string &yPath)
 
 int main(int argc, char *argv[])
 {
-  //Command line options for terminal input (for quick testing)
+  /*//Command line options for terminal input (for quick testing)
   int opt, index;
   static struct option long_options[] =
   {
       {"map", required_argument, 0, 'm'}, //Input map file name (with extension)
       
       //Testing features
-      /*{"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 3 * nodeCount (larger batch => >accuracy, <performance)
+      {"batchSize", required_argument, 0, 'b'}, //Paths to generate each batch, defaults to 3 * nodeCount (larger batch => >accuracy, <performance)
       {"testPath", required_argument, 0, 't'},  //Tests inputted path and speeds (1), tests and optimizes speeds on inputted path (2), or both (3)
       {"plotMap", required_argument, 0, 'p'},   //If 1, outputs map and path data to PlotterData.csv for testing (ensure file GraphPlotter.py is in directory and python3 is installed on machine)
       {"randomMap", required_argument, 0, 'r'}, //If 1, generates random map in RandomMap.csv with specified paremeters
       {"distScale", required_argument, 0, 'd'}, //Scales all planet distances by constant factor distScale (simulate extreme conditions)
-      {"quickTest", required_argument, 0, 'q'}, //Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)*/
+      {"quickTest", required_argument, 0, 'q'}, //Loops random generation and algorithm for rapid testing (1 for auto-input, 2 for manual)
       {0, 0, 0, 0}
   };
-  while ((opt = getopt_long(argc, argv, "m:"/*"m:b:t:p:r:d:q:"*/, long_options, &index)) != -1)
+  while ((opt = getopt_long(argc, argv, "m:b:t:p:r:d:q:", long_options, &index)) != -1)
   {
     switch (opt)
     {
     case 'm':
       fileName = optarg;
       break;
-    /*case 'b':
+    case 'b':
       batchSize = atoi(optarg);
       break;
     case 't':
@@ -1932,11 +1935,11 @@ int main(int argc, char *argv[])
       break;
     case 'q':
       quickTest = atoi(optarg);
-      break;*/
+      break;
     default:
       break;
     }
-  }
+  }*/
 
   cout << endl
        << "Welcome Mission Control!" << endl;
