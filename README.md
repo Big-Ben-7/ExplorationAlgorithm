@@ -1,6 +1,5 @@
-# TSA Region 8 HS Coding Challenge: Exploration Algorithm
-- Team ID: 2098-901, Individual ID: 2098-010
-- Description: This program calculates the shortest viable route from Earth to a target planet from map data
+# Exploration Algorithm
+- Description: This program calculates the shortest viable route from Earth to a target planet from map data with constraints on resources and hostile and restock planets. Efficiency is improved with a combination of existing pathfinding algorithms and an original geometric approach. It won 1st Place at the 2026 PA TSA Region 8 Conference.
 - Language: C++20 (chosen for better performance, from the options on the TSA national website Themes and Problems)
 - Software: Visual Studio Code
 - Interface: Command-line interface (terminal)
